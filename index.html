@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>ReconciliadorGC — Global81 SPA</title>
+<title>ReconciliadorGC — Global66</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
@@ -894,9 +894,10 @@ const DEFAULT_PROVS=[
 ];
 
 // ══ PALETA ════════════════════════════════════════════════════════════════════
-const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#388BFD',
-  acL:'#79C0FF',green:'#3FB950',yellow:'#D29922',red:'#F85149',text:'#E6EDF3',
-  muted:'#8B949E',purple:'#A371F7',teal:'#2DD4BF',white:'#FFFFFF'};
+const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3D52F0',
+  acL:'#9FB2FF',green:'#3FB950',yellow:'#D29922',red:'#F85149',text:'#E6EDF3',
+  muted:'#8B949E',purple:'#A371F7',teal:'#2DD4BF',white:'#FFFFFF',
+  brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
 const PROVS_VERSION="v5.2-845";
@@ -1219,7 +1220,7 @@ function exportXLSX(txs,assignments,provMatches,periodo){
   const exclCount=txs.filter(isExcluded).length;
   let h='<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial;font-size:11px">';
   h+=`<tr><td colspan="14" style="background:#0D1117;color:#fff;font-size:16px;font-weight:bold;padding:8px">MOVIMIENTOS TARJETA — ${esc(periodo||"PERÍODO")}</td></tr>`;
-  h+=`<tr><td colspan="14" style="background:#161B22;color:#79C0FF;padding:6px">Global81 SPA · Cruce con Listado Manager</td></tr>`;
+  h+=`<tr><td colspan="14" style="background:#1B279E;color:#fff;padding:6px">Global66 · Cruce con Listado Manager</td></tr>`;
   h+=`<tr><td colspan="14" style="background:#1C2128;color:#E6EDF3;padding:6px">Total: ${total}  |  Con proveedor: ${matchCount}  |  Con doc: ${docCount}  |  Excluidas: ${exclCount}</td></tr>`;
   const th=(t,c)=>`<td style="background:${c};color:#fff;font-weight:bold;padding:5px">${t}</td>`;
   h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Código','#1A7F37')+th('N° Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
@@ -1506,25 +1507,31 @@ function App(){
       onChange:ev=>{const f=ev.target.files[0];if(f)onFile(f);ev.target.value="";}}));
 
   // ════════ HEADER ════════
-  const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.surf,borderBottom:"1px solid "+C.border,padding:"10px 20px",display:"flex",alignItems:"center",gap:18}},
-    e("div",{style:{display:"flex",alignItems:"center",gap:10}},
-      e("span",{style:{fontSize:26}},"🔄"),
+  // Logo Global66 (recreación SVG: círculo blanco + onda en azul de marca)
+  const g66Logo=sz=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
+    e("circle",{cx:24,cy:24,r:24,fill:C.white}),
+    e("path",{d:"M11 27 q4.3 -8 8.6 0 t8.6 0",fill:"none",stroke:C.brand,strokeWidth:3.6,strokeLinecap:"round",strokeLinejoin:"round"}));
+  const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"10px 20px",display:"flex",alignItems:"center",gap:18,boxShadow:"0 1px 8px rgba(0,0,0,.25)"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:11}},
+      g66Logo(34),
       e("div",null,
-        e("div",{style:{fontWeight:800,fontSize:17,letterSpacing:.3}},"ReconciliadorGC"),
-        e("div",{style:{fontSize:11,color:C.muted}},"Global81 SPA · Cruce Mensual + Manager"))),
+        e("div",{style:{display:"flex",alignItems:"baseline",gap:8}},
+          e("span",{style:{fontWeight:800,fontSize:18,letterSpacing:.2,color:C.white}},"Global66"),
+          e("span",{style:{fontWeight:600,fontSize:13,color:"rgba(255,255,255,.78)"}},"· ReconciliadorGC")),
+        e("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},"Cruce Mensual de Tarjetas + Manager"))),
     e("div",{style:{flex:1,display:"flex",justifyContent:"center",gap:6}},
       [["cruce","Cruce"],["proveedores","Proveedores"],["docs","Docs"]].map(([k,l])=>
-        e("div",{key:k,className:"tab",onClick:()=>setTab(k),style:{
-          padding:"7px 18px",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:14,
-          color:tab===k?C.white:C.muted,background:tab===k?C.accent:"transparent"}},l))),
+        e("div",{key:k,onClick:()=>setTab(k),style:{
+          padding:"7px 18px",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:14,transition:"all .15s",
+          color:tab===k?C.brand:"rgba(255,255,255,.85)",background:tab===k?C.white:"rgba(255,255,255,.12)"}},l))),
     e("div",{style:{display:"flex",gap:8,fontSize:11,alignItems:"center"}},
-      badge(provs.length+" proveedores",C.surf2,C.acL),
-      badge(docsDB.length+" docs",C.surf2,C.teal),
+      badge(provs.length+" proveedores","rgba(255,255,255,.16)",C.white),
+      badge(docsDB.length+" docs","rgba(255,255,255,.16)",C.white),
       sb&&(session
         ?e("div",{style:{display:"flex",gap:6,alignItems:"center"}},
-            badge("🔓 "+(session.user&&session.user.email?session.user.email:"sesión"),"rgba(63,185,80,.18)",C.green),
-            e("button",{className:"btnh",onClick:doLogout,style:{background:C.surf2,color:C.text,border:"1px solid "+C.border,borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:600}},"Salir"))
-        :e("button",{className:"btnh",onClick:()=>{setShowLogin(true);setAuthErr("");},style:{background:C.accent,color:C.white,border:"none",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700}},"🔐 Iniciar sesión"))));
+            badge("🔓 "+(session.user&&session.user.email?session.user.email:"sesión"),"rgba(255,255,255,.2)",C.white),
+            e("button",{className:"btnh",onClick:doLogout,style:{background:"rgba(255,255,255,.16)",color:C.white,border:"1px solid rgba(255,255,255,.3)",borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:600}},"Salir"))
+        :e("button",{className:"btnh",onClick:()=>{setShowLogin(true);setAuthErr("");},style:{background:C.white,color:C.brand,border:"none",borderRadius:7,padding:"5px 12px",fontSize:11,fontWeight:700}},"🔐 Iniciar sesión"))));
 
   // ════════ TAB CRUCE ════════
   const tabCruce=e("div",null,
