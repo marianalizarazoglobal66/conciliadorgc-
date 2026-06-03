@@ -1083,75 +1083,85 @@ function assignDocs(txs,provs,docsDB){
     byProv.get(id).push(i);
   });
 
-  // ── CASO 4 — N TX → 1 doc (pago fraccionado, mismo mes) ───────────────────
+  // ── MOTOR DE ASIGNACIÓN (por proveedor · alcance: mismo mes) ──────────────
   const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
-  // Asocia un documento a un grupo de transacciones: pone el doc en cada línea
-  // y la diferencia (= suma de movimientos − total doc) solo en la primera.
+  const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
+  const FRAC_BAND=0.30;   // fraccionado N→1 (incluye diferencia de cambio)
+  const SUM_BAND=0.05;    // consolidado 1→N (suma de docs ≈ egreso)
+  const EXACT_BAND=0.02;  // 1→1 casi exacto
+  const ONE_BAND=0.15;    // 1→1 aproximado (resto)
+
+  // 1 doc → varias TX (fraccionado): doc en cada línea; diferencia solo en la 1ª
   const assignFrac=(ids,doc)=>{
     const sum=ids.reduce((s,i)=>s+(txs[i].debito||0),0);
     const diffAmt=sum-doc.total;
     const obs=doc.total>0&&Math.abs(diffAmt)/doc.total>0.001?`Diferencia cambio ${(Math.abs(diffAmt)/doc.total*100).toFixed(2)}%`:"";
-    ids.forEach((i,k)=>{result[i]={...doc,_frac:true,_fracMain:k===0,_diffAmt:k===0?diffAmt:null,_obs:k===0?obs:""};});
+    ids.forEach((i,k)=>{result[i]={...doc,_frac:ids.length>1,_fracMain:k===0,_diffAmt:k===0?diffAmt:null,_obs:k===0?obs:""};});
     usedDoc.add(dk(doc));
   };
-  const FRAC_BAND=0.30; // margen máx. de diferencia (incl. tipo de cambio) para asociar
-  // ¿una sola línea calza casi exacto con este documento? → es 1→1, no fraccionado
-  const singleExact=(grp,doc)=>grp.some(i=>Math.abs((txs[i].debito||0)-doc.total)<Math.max(100,doc.total*0.02));
+  // 1 TX → varios docs (consolidado): concatena N° y códigos; diferencia = egreso − suma docs
+  const assignMulti=(i,docs)=>{
+    const totalSum=docs.reduce((s,d)=>s+d.total,0);
+    docs.forEach(d=>usedDoc.add(dk(d)));
+    result[i]={...docs[0],
+      ndoc:docs.map(d=>d.ndoc).join(" / "),
+      codigo:[...new Set(docs.map(d=>d.codigo).filter(Boolean))].join(", "),
+      total:totalSum,_multi:docs.length>1,_diffAmt:(txs[i].debito||0)-totalSum,_obs:""};
+  };
+
   for(const [,idxs] of byProv){
-    if(idxs.length<2)continue;
     const prov=provOf[idxs[0]];
     const pRut=normRut(prov.rut);
     if(!pRut)continue;
-    // documentos del proveedor, de MAYOR a menor total (el grande recibe las múltiples líneas)
-    const pdocs=docsDB.filter(d=>normRut(d.rut)===pRut&&d.total>0&&!usedDoc.has(dk(d))).sort((a,b)=>b.total-a.total);
-    if(!pdocs.length)continue;
-    for(const doc of pdocs){
-      if(usedDoc.has(dk(doc)))continue;
-      const dd=parseDate(doc.fecha);
-      const grp=idxs.filter(i=>!result[i]).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));
-      if(grp.length<2)continue;                       // 0/1 línea → lo resuelven los casos 1→1 / consolidado
-      // si UNA sola línea ya calza con el total y hay más documentos por asignar, no es fraccionado
-      if(singleExact(grp,doc)&&pdocs.length>1)continue;
-      // mejor subconjunto de líneas del mes cuya suma ≈ total del documento (hasta 12, banda amplia)
-      const best=bestSubset(grp.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,12,FRAC_BAND);
-      if(best){assignFrac(best.map(o=>o.ref),doc);continue;}
-      // último recurso: si es el único documento del proveedor en ese mes, asociar TODAS sus líneas del mes
-      const docsMes=pdocs.filter(d=>!usedDoc.has(dk(d))&&sameMonth(parseDate(d.fecha),dd)).length;
-      if(docsMes===1){
-        const sumAll=grp.reduce((s,i)=>s+(txs[i].debito||0),0);
-        if(Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND)assignFrac(grp,doc);
+    const allDocs=docsDB.filter(d=>normRut(d.rut)===pRut&&d.total>0);
+    if(!allDocs.length)continue;
+    const dUnused=d=>!usedDoc.has(dk(d));
+    const tUnused=i=>!result[i];
+
+    // 1) 1→1 casi exacto (mismo mes)
+    for(const i of idxs){
+      if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
+      const m=allDocs.filter(dUnused).filter(d=>sameMonth(parseDate(d.fecha),td)).find(d=>Math.abs(d.total-amt)<Math.max(100,amt*EXACT_BAND));
+      if(m){result[i]={...m,_diffAmt:amt-m.total,_obs:""};usedDoc.add(dk(m));}
+    }
+
+    // 2) CONSOLIDADO — 1 TX → varios docs (prioriza documentos de la MISMA FECHA del movimiento)
+    for(const i of idxs){
+      if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
+      const sameDate=allDocs.filter(dUnused).filter(d=>sameDay(parseDate(d.fecha),td));
+      if(sameDate.length>=2){
+        const sum=sameDate.reduce((s,d)=>s+d.total,0);
+        if(amt>0&&Math.abs(sum-amt)/amt<=SUM_BAND){assignMulti(i,sameDate);continue;} // todas las de esa fecha
+        const sub=subsetSum(sameDate.map(d=>({amt:d.total,ref:d})),amt,2,8,SUM_BAND);
+        if(sub){assignMulti(i,sub.map(o=>o.ref));continue;}                            // subconjunto de esa fecha
+      }
+      const near=getDocCandidates(txs[i],prov,docsDB).filter(dUnused);                  // si no, docs del mes (±10 días)
+      if(near.length>=2){
+        const sub=subsetSum(near.map(d=>({amt:d.total,ref:d})),amt,2,8,SUM_BAND);
+        if(sub&&sub.length>=2){assignMulti(i,sub.map(o=>o.ref));continue;}
       }
     }
-  }
 
-  // ── CASO 3 — 1 TX → N docs (pago consolidado) ─────────────────────────────
-  txs.forEach((tx,i)=>{
-    if(result[i]||excluded[i]||!provOf[i]||!(tx.debito>0))return;
-    const cands=getDocCandidates(tx,provOf[i],docsDB).filter(d=>!usedDoc.has(dk(d)));
-    if(cands.length<2)return;
-    const sub=subsetSum(cands.map(d=>({amt:d.total,ref:d})),tx.debito,2,8,0.05);
-    if(sub){
-      const chosen=sub.map(o=>o.ref);
-      const totalSum=chosen.reduce((s,d)=>s+d.total,0);
-      chosen.forEach(d=>usedDoc.add(dk(d)));
-      result[i]={...chosen[0],
-        ndoc:chosen.map(d=>d.ndoc).join(" / "),
-        codigo:[...new Set(chosen.map(d=>d.codigo).filter(Boolean))].join(", "),
-        total:totalSum,_multi:true,_diffAmt:tx.debito-totalSum,_obs:""};
+    // 3) FRACCIONADO — varias TX → 1 doc (doc grande primero; el dominante absorbe todas las líneas)
+    for(const doc of allDocs.filter(dUnused).slice().sort((a,b)=>b.total-a.total)){
+      if(!dUnused(doc))continue; const dd=parseDate(doc.fecha);
+      const pool=idxs.filter(tUnused).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));
+      if(pool.length<2)continue;
+      const remTotal=allDocs.filter(dUnused).reduce((s,d)=>s+d.total,0);
+      const dominante=doc.total>=0.6*remTotal;                       // único documento relevante del proveedor
+      const sumAll=pool.reduce((s,i)=>s+(txs[i].debito||0),0);
+      if(dominante&&doc.total>0&&Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND){assignFrac(pool,doc);continue;}
+      const best=bestSubset(pool.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,12,FRAC_BAND);
+      if(best)assignFrac(best.map(o=>o.ref),doc);
     }
-  });
 
-  // ── CASOS 1 & 2 — 1 TX → 1 doc (greedy por score) ─────────────────────────
-  const singles=[];
-  txs.forEach((tx,i)=>{
-    if(result[i]||excluded[i]||!provOf[i]||!(tx.debito>0))return;
-    const cands=getDocCandidates(tx,provOf[i],docsDB);
-    if(cands.length)singles.push({i,cands,debito:tx.debito});
-  });
-  singles.sort((a,b)=>a.cands[0]._score-b.cands[0]._score);
-  for(const {i,cands,debito} of singles){
-    for(const doc of cands){
-      if(!usedDoc.has(dk(doc))){result[i]={...doc,_diffAmt:debito-doc.total,_obs:""};usedDoc.add(dk(doc));break;}
+    // 4) 1→1 aproximado — el resto de líneas al doc disponible más cercano (mismo mes, banda 15%)
+    for(const i of idxs){
+      if(!tUnused(i))continue; const amt=txs[i].debito||0;
+      const cands=getDocCandidates(txs[i],prov,docsDB).filter(dUnused);
+      if(cands.length&&amt>0&&Math.abs(cands[0].total-amt)/amt<=ONE_BAND){
+        result[i]={...cands[0],_diffAmt:amt-cands[0].total,_obs:""};usedDoc.add(dk(cands[0]));
+      }
     }
   }
   return result;
