@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>ReconciliadorGC — Global66</title>
+<title>Conciliador TC — Global66</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
@@ -1580,18 +1580,21 @@ function App(){
       onChange:ev=>{const f=ev.target.files[0];if(f)onFile(f);ev.target.value="";}}));
 
   // ════════ HEADER ════════
-  // Logo Global66 (recreación SVG: círculo blanco + onda en azul de marca)
-  const g66Logo=sz=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
-    e("circle",{cx:24,cy:24,r:24,fill:C.white}),
-    e("path",{d:"M11 27 q4.3 -8 8.6 0 t8.6 0",fill:"none",stroke:C.brand,strokeWidth:3.6,strokeLinecap:"round",strokeLinejoin:"round"}));
-  const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"10px 20px",display:"flex",alignItems:"center",gap:18,boxShadow:"0 1px 8px rgba(0,0,0,.25)"}},
-    e("div",{style:{display:"flex",alignItems:"center",gap:11}},
-      g66Logo(34),
+  // Logo Global66 (recreación SVG: onda simétrica tipo "~").
+  //  filled=true → círculo blanco + onda azul (para la barra azul)
+  //  filled=false → contorno + onda en un color (para marca de agua)
+  const g66Mark=(sz,col,filled)=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
+    filled?e("circle",{cx:24,cy:24,r:23,fill:col})
+          :e("circle",{cx:24,cy:24,r:22,fill:"none",stroke:col,strokeWidth:2}),
+    e("path",{d:"M13 24 q5.5 -7 11 0 t11 0",fill:"none",stroke:filled?C.brand:col,strokeWidth:3.4,strokeLinecap:"round",strokeLinejoin:"round"}));
+  const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"18px 24px",display:"flex",alignItems:"center",gap:18,boxShadow:"0 2px 12px rgba(0,0,0,.3)"}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:13}},
+      g66Mark(42,C.white,true),
       e("div",null,
         e("div",{style:{display:"flex",alignItems:"baseline",gap:8}},
-          e("span",{style:{fontWeight:800,fontSize:18,letterSpacing:.2,color:C.white}},"Global66"),
-          e("span",{style:{fontWeight:600,fontSize:13,color:"rgba(255,255,255,.78)"}},"· ReconciliadorGC")),
-        e("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},"Cruce Mensual de Tarjetas + Manager · ",e("b",{style:{color:"#FFD166"}},"v6")))),
+          e("span",{style:{fontWeight:800,fontSize:20,letterSpacing:.2,color:C.white}},"Global66"),
+          e("span",{style:{fontWeight:600,fontSize:14,color:"rgba(255,255,255,.82)"}},"· Conciliador TC")),
+        e("div",{style:{fontSize:11.5,color:"rgba(255,255,255,.72)"}},"Conciliación Mensual de Tarjetas + Manager"))),
     e("div",{style:{flex:1,display:"flex",justifyContent:"center",gap:6}},
       [["cruce","Cruce"],["proveedores","Proveedores"],["docs","Docs"]].map(([k,l])=>
         e("div",{key:k,onClick:()=>setTab(k),style:{
@@ -1764,8 +1767,16 @@ function App(){
           style:{background:C.accent,color:C.white,border:"none",borderRadius:8,padding:"9px 18px",fontWeight:700,flex:1}},authBusy?"⏳…":"Entrar"),
         e("button",{onClick:()=>setShowLogin(false),style:btnSec},"Cancelar"))));
 
-  return e("div",null,header,loginModal,
-    e("div",{style:{maxWidth:1400,margin:"0 auto",padding:20}},
+  // Marca de agua: logo grande, fijo en la parte inferior, DETRÁS del contenido
+  // (z-index 0 + pointer-events none). Las tablas tienen fondo opaco, así que no
+  // interfieren con la info: el logo solo se ve en las zonas oscuras vacías.
+  const watermark=e("div",{style:{position:"fixed",left:0,right:0,bottom:0,height:"55vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",paddingBottom:48,pointerEvents:"none",zIndex:0,overflow:"hidden"}},
+    e("div",{style:{opacity:0.05,display:"flex",flexDirection:"column",alignItems:"center",gap:10}},
+      g66Mark(300,C.white,false),
+      e("div",{style:{fontWeight:800,fontSize:74,letterSpacing:3,color:C.white,lineHeight:1}},"Global66")));
+
+  return e("div",null,watermark,header,loginModal,
+    e("div",{style:{position:"relative",zIndex:1,maxWidth:1400,margin:"0 auto",padding:20}},
       dbMsg&&e("div",{style:{fontSize:11.5,color:C.muted,marginBottom:12,padding:"6px 10px",background:C.surf,border:"1px solid "+C.border,borderRadius:7,display:"inline-block"}},dbMsg),
       tab==="cruce"?tabCruce:tab==="proveedores"?tabProv:tabDocs));
 }
