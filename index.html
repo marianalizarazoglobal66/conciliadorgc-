@@ -1782,6 +1782,33 @@ function App(){
         color:tab===k?C.white:C.muted,background:tab===k?C.accent:C.surf,
         border:"1px solid "+(tab===k?C.accent:C.border)}},l)));
 
+  // ════════ PANTALLA DE LOGIN ════════
+  // Si hay nube y NO hay sesión, mostrar SOLO el login con el logo de marca de agua detrás.
+  if(sb&&!session){
+    return e("div",{style:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",background:C.bg,padding:20}},
+      e("div",{style:{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",zIndex:0}},
+        e("div",{style:{opacity:0.06,display:"flex",flexDirection:"column",alignItems:"center",gap:14}},
+          g66Watermark(340,C.white),
+          e("div",{style:{fontWeight:800,fontSize:80,letterSpacing:3,color:C.white,lineHeight:1}},"Global66"))),
+      e("div",{style:{position:"relative",zIndex:1,background:C.surf,border:"1px solid "+C.border,borderRadius:16,padding:"34px 30px",width:390,maxWidth:"92vw",boxShadow:"0 16px 50px rgba(0,0,0,.55)"}},
+        e("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,marginBottom:20}},
+          g66Logo(60),
+          e("div",{style:{fontWeight:800,fontSize:21,color:C.text}},"Global66 · Conciliador TC"),
+          e("div",{style:{fontSize:12,color:C.muted,textAlign:"center"}},"Conciliación Mensual de Tarjetas + Manager")),
+        e("div",{style:{fontWeight:700,fontSize:15,marginBottom:3,color:C.text}},"Iniciar sesión"),
+        e("div",{style:{fontSize:12,color:C.muted,marginBottom:16}},"Ingresa con tu cuenta autorizada."),
+        e("div",{style:{display:"flex",flexDirection:"column",gap:11}},
+          fld("Correo",authEmail,setAuthEmail,"1 1 auto"),
+          e("div",{style:{display:"flex",flexDirection:"column",gap:5}},
+            e("label",{style:{fontSize:11,color:C.muted}},"Contraseña"),
+            e("input",{type:"password",value:authPass,onChange:ev=>setAuthPass(ev.target.value),
+              onKeyDown:ev=>{if(ev.key==="Enter")doLogin();},
+              style:{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"11px 12px",color:C.text,fontSize:14}}))),
+        authErr&&e("div",{style:{fontSize:12.5,color:C.red,marginTop:12}},authErr),
+        e("button",{className:"btnh",onClick:doLogin,disabled:authBusy,
+          style:{marginTop:20,width:"100%",background:C.accent,color:C.white,border:"none",borderRadius:10,padding:"12px",fontWeight:700,fontSize:15}},authBusy?"⏳ Entrando…":"Entrar")));
+  }
+
   return e("div",null,watermark,header,loginModal,
     e("div",{style:{position:"relative",zIndex:1,maxWidth:1400,margin:"0 auto",padding:20}},
       tabsRow,
