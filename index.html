@@ -1487,13 +1487,18 @@ function App(){
         else{const np={id:++maxId,nombre:r.nombre,rut:r.rut,kw};out.push(np);if(r.rut)byRut.set(key,out.length-1);touched.push(np);added++;}
       }
       if(sb&&session){
-        for(let i=0;i<touched.length;i+=500){
-          const up=await sb.from("proveedores").upsert(touched.slice(i,i+500).map(p=>({id:p.id,nombre:p.nombre,rut:p.rut,kw:p.kw})),{onConflict:"id"});
+        // consolidar por id (si el archivo trae RUT repetidos, evita el error "affect row a second time")
+        const byId=new Map();
+        for(const p of touched)byId.set(p.id,{id:p.id,nombre:p.nombre,rut:p.rut,kw:p.kw});
+        const payload=[...byId.values()];
+        for(let i=0;i<payload.length;i+=500){
+          const up=await sb.from("proveedores").upsert(payload.slice(i,i+500),{onConflict:"id"});
           if(up.error)throw up.error;
         }
       }
       setProvs(out);
-      setProvMsg(`✅ ${added} agregados, ${upd} actualizados${sb&&session?" (guardado en la nube)":""}.`);
+      const dups=touched.length-new Set(touched.map(p=>p.id)).size;
+      setProvMsg(`✅ ${added} agregados, ${upd} actualizados${dups>0?` · ${dups} duplicado(s) por RUT consolidado(s)`:""}${sb&&session?" (guardado en la nube)":""}.`);
     }catch(err){setProvMsg("❌ Error: "+(err.message||err));}
   },[provs,session]);
 
