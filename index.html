@@ -1164,6 +1164,29 @@ function assignDocs(txs,provs,docsDB){
       }
     }
   }
+
+  // ── 5) MATCH INVERSO POR MONTO — movimientos SIN proveedor (nombre genérico / pasarela) ──
+  // Para egresos que no identificaron proveedor, se busca un documento NO usado cuyo VALOR
+  // coincida con el del movimiento (mismo mes / ±10 días). Si calza, se asocia y el NOMBRE
+  // del proveedor se toma desde ese documento.
+  const AMT_BAND=0.01; // coincidencia de valor: exacto (±1% o $100)
+  txs.forEach((tx,i)=>{
+    if(result[i]||excluded[i]||provOf[i]||!(tx.debito>0))return;   // solo SIN proveedor y SIN doc
+    const amt=tx.debito; const td=parseDate(tx.fecha);
+    let best=null,bestDiff=Infinity;
+    for(const doc of docsDB){
+      if(!(doc.total>0)||usedDoc.has(dk(doc)))continue;
+      const dd=parseDate(doc.fecha);
+      const enVentana=sameMonth(dd,td)||isNaN(dd)||isNaN(td)||Math.abs((td-dd)/864e5)<=10;
+      if(!enVentana)continue;
+      const diff=Math.abs(doc.total-amt);
+      if(diff<=Math.max(100,amt*AMT_BAND)&&diff<bestDiff){bestDiff=diff;best=doc;}
+    }
+    if(best){
+      usedDoc.add(dk(best));
+      result[i]={...best,_diffAmt:amt-best.total,_byAmount:true,_obs:"Proveedor asignado por monto"};
+    }
+  });
   return result;
 }
 
@@ -1282,7 +1305,7 @@ function exportXLSX(txs,assignments,provMatches,periodo){
     h+=`<tr style="background:${bg}">`+
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
-      td(excl?"EXCLUIDA":(p?p.nombre:"Sin match"))+td(p?p.rut:"")+
+      td(excl?"EXCLUIDA":(p?p.nombre:(d&&d.razon?d.razon+" (por monto)":"Sin match")))+td(p?p.rut:(d?d.rut:""))+
       td(mgr,'center')+td(d?d.codigo:"")+td(d?d.ndoc:"")+td(d&&d.total?"$"+fmtCLP(d.total):"",'right')+
       td(diff?"$"+diff:"",'right')+td(obs)+'</tr>';
   });
@@ -1360,7 +1383,7 @@ function App(){
   const txProvMatches=useMemo(()=>txs.map(r=>isExcluded(r)?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs]);
   // ── useMemo: estadísticas ─────────────────────────────────────────────────
   const {matchCount,docCount,exclCount}=useMemo(()=>({
-    matchCount:txProvMatches.filter(Boolean).length,
+    matchCount:txs.reduce((n,_,i)=>n+((txProvMatches[i]||(assignments[i]&&assignments[i]._byAmount))?1:0),0),
     docCount:assignments.filter(Boolean).length,
     exclCount:txs.filter(isExcluded).length,
   }),[txProvMatches,assignments,txs]);
@@ -1368,10 +1391,11 @@ function App(){
   // ── useMemo: filtrado + vista ─────────────────────────────────────────────
   const txView=useMemo(()=>txs.map((r,i)=>({...r,_origIdx:i,_prov:txProvMatches[i]})).filter(r=>{
     const p=r._prov,d=assignments[r._origIdx];
-    if(filter==="match"&&!p)return false;
-    if(filter==="nomatch"&&p)return false;
+    const hasProv=p||(d&&d._byAmount);
+    if(filter==="match"&&!hasProv)return false;
+    if(filter==="nomatch"&&hasProv)return false;
     if(filter==="condoc"&&!d)return false;
-    if(filter==="sindoc"&&(d||!p))return false;
+    if(filter==="sindoc"&&(d||!hasProv))return false;
     if(search){const s=search.toLowerCase();if(!String(r.tipo||"").toLowerCase().includes(s)&&!String(r.tercero||"").toLowerCase().includes(s))return false;}
     return true;
   }),[txs,txProvMatches,assignments,filter,search]);
@@ -1631,8 +1655,8 @@ function App(){
             td(r.tarjeta?badge(r.tarjeta,"rgba(163,113,247,.2)",C.purple):"","center"),
             td(r.debito?fmtCLP(r.debito):"","right",C.red),
             td(r.abono?fmtCLP(r.abono):"","right",C.green),
-            td(excl?badge("⛔ Excluida",C.red):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):badge("Sin match","rgba(248,81,73,.18)",C.red)),
-            td(p?p.rut:"","left",C.muted),
+            td(excl?badge("⛔ Excluida",C.red):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(d&&d.razon?badge(d.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
+            td(p?p.rut:(d?d.rut:""),"left",C.muted),
             td(mgr||"—","center",d?null:C.muted),
             td(d?d.codigo:"","left",C.muted),
             td(d?d.ndoc:"","left",C.teal),
