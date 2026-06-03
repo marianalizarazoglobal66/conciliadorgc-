@@ -1044,6 +1044,25 @@ function subsetSum(items,target,minK,maxK,tolPct){
   return found;
 }
 
+// Busca el subconjunto (minK..maxK elementos) cuya suma queda MÁS CERCA del target,
+// dentro de una banda amplia (band). Ideal para fraccionados con diferencia de cambio.
+function bestSubset(items,target,minK,maxK,band){
+  if(!(target>0))return null;
+  let pool=items.filter(o=>o.amt>0);
+  if(pool.length<minK)return null;
+  const tol=target*band;
+  if(pool.length>16)pool=pool.slice().sort((a,b)=>Math.abs(a.amt-target)-Math.abs(b.amt-target)).slice(0,16);
+  const arr=pool.slice().sort((a,b)=>b.amt-a.amt);
+  let best=null,bestDiff=Infinity;
+  (function dfs(start,combo,sum){
+    if(sum-target>tol)return;                          // sobrepasó la banda (todos positivos)
+    if(combo.length>=minK){const d=Math.abs(sum-target);if(d<=tol&&d<bestDiff){bestDiff=d;best=combo.slice();}}
+    if(combo.length>=maxK)return;
+    for(let i=start;i<arr.length;i++){combo.push(arr[i]);dfs(i+1,combo,sum+arr[i].amt);combo.pop();}
+  })(0,[],0);
+  return best;
+}
+
 // ══ ASIGNACIÓN DE DOCUMENTOS — 4 casos en orden de prioridad ══════════════════
 // Caso 4 (N TX→1 doc, fraccionado) → Caso 3 (1 TX→N docs, consolidado) → Casos 1&2 (1→1)
 function assignDocs(txs,provs,docsDB){
@@ -1075,41 +1094,33 @@ function assignDocs(txs,provs,docsDB){
     ids.forEach((i,k)=>{result[i]={...doc,_frac:true,_fracMain:k===0,_diffAmt:k===0?diffAmt:null,_obs:k===0?obs:""};});
     usedDoc.add(dk(doc));
   };
-  const FRAC_BAND=0.30; // margen máx. de diferencia de cambio para asociar todas las líneas del mes
+  const FRAC_BAND=0.30; // margen máx. de diferencia (incl. tipo de cambio) para asociar
+  // ¿una sola línea calza casi exacto con este documento? → es 1→1, no fraccionado
+  const singleExact=(grp,doc)=>grp.some(i=>Math.abs((txs[i].debito||0)-doc.total)<Math.max(100,doc.total*0.02));
   for(const [,idxs] of byProv){
     if(idxs.length<2)continue;
     const prov=provOf[idxs[0]];
     const pRut=normRut(prov.rut);
     if(!pRut)continue;
-    const pdocs=docsDB.filter(d=>normRut(d.rut)===pRut&&d.total>0&&!usedDoc.has(dk(d)));
+    // documentos del proveedor, de MAYOR a menor total (el grande recibe las múltiples líneas)
+    const pdocs=docsDB.filter(d=>normRut(d.rut)===pRut&&d.total>0&&!usedDoc.has(dk(d))).sort((a,b)=>b.total-a.total);
     if(!pdocs.length)continue;
-    const monthGrp=doc=>{const dd=parseDate(doc.fecha);return idxs.filter(i=>!result[i]).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));};
-
-    if(pdocs.length===1){
-      // UN SOLO documento del proveedor en el mes → se asocia a sus líneas del mes
-      const doc=pdocs[0];
-      const grp=monthGrp(doc);
-      if(grp.length>=2){
-        // si una sola línea ya calza con el total, no es fraccionado (lo toma el caso 1→1)
-        const singleMatch=grp.some(i=>Math.abs((txs[i].debito||0)-doc.total)<Math.max(100,doc.total*0.02));
-        if(!singleMatch){
-          const sub=subsetSum(grp.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,6,0.08);
-          if(sub)assignFrac(sub.map(o=>o.ref),doc);                       // subconjunto exacto si existe
-          else{
-            const sumAll=grp.reduce((s,i)=>s+(txs[i].debito||0),0);
-            if(Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND)assignFrac(grp,doc); // si no, todas las del mes
-          }
-        }
-      }
-      continue;
-    }
-    // Varios documentos del proveedor → buscar subconjunto de TX por documento (mismo mes, ±5%)
     for(const doc of pdocs){
       if(usedDoc.has(dk(doc)))continue;
-      const pool=monthGrp(doc).map(i=>({amt:txs[i].debito||0,ref:i}));
-      if(pool.length<2)continue;
-      const sub=subsetSum(pool,doc.total,2,6,0.05);
-      if(sub)assignFrac(sub.map(o=>o.ref),doc);
+      const dd=parseDate(doc.fecha);
+      const grp=idxs.filter(i=>!result[i]).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));
+      if(grp.length<2)continue;                       // 0/1 línea → lo resuelven los casos 1→1 / consolidado
+      // si UNA sola línea ya calza con el total y hay más documentos por asignar, no es fraccionado
+      if(singleExact(grp,doc)&&pdocs.length>1)continue;
+      // mejor subconjunto de líneas del mes cuya suma ≈ total del documento (hasta 12, banda amplia)
+      const best=bestSubset(grp.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,12,FRAC_BAND);
+      if(best){assignFrac(best.map(o=>o.ref),doc);continue;}
+      // último recurso: si es el único documento del proveedor en ese mes, asociar TODAS sus líneas del mes
+      const docsMes=pdocs.filter(d=>!usedDoc.has(dk(d))&&sameMonth(parseDate(d.fecha),dd)).length;
+      if(docsMes===1){
+        const sumAll=grp.reduce((s,i)=>s+(txs[i].debito||0),0);
+        if(Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND)assignFrac(grp,doc);
+      }
     }
   }
 
