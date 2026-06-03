@@ -1197,7 +1197,7 @@ function parseDocs(data){
   const headers=(data[hi]||[]).map(c=>String(c||"").trim().toLowerCase());
   const col=colFinder(headers);
   const ci={
-    ndoc:col("n°","n °","ndoc","número","numero","folio","doc"),
+    ndoc:col("nº doc","n° doc","nro doc","núm doc","ndoc","folio","nº","n°","número","numero"),
     tipo:col("tipo"),
     rut:col("rut"),
     razon:col("razón","razon","social","proveedor","nombre"),
