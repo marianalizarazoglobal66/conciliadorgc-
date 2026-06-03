@@ -1064,29 +1064,52 @@ function assignDocs(txs,provs,docsDB){
     byProv.get(id).push(i);
   });
 
-  // ── CASO 4 — N TX → 1 doc (pago fraccionado) ──────────────────────────────
+  // ── CASO 4 — N TX → 1 doc (pago fraccionado, mismo mes) ───────────────────
+  const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
+  // Asocia un documento a un grupo de transacciones: pone el doc en cada línea
+  // y la diferencia (= suma de movimientos − total doc) solo en la primera.
+  const assignFrac=(ids,doc)=>{
+    const sum=ids.reduce((s,i)=>s+(txs[i].debito||0),0);
+    const diffAmt=sum-doc.total;
+    const obs=doc.total>0&&Math.abs(diffAmt)/doc.total>0.001?`Diferencia cambio ${(Math.abs(diffAmt)/doc.total*100).toFixed(2)}%`:"";
+    ids.forEach((i,k)=>{result[i]={...doc,_frac:true,_fracMain:k===0,_diffAmt:k===0?diffAmt:null,_obs:k===0?obs:""};});
+    usedDoc.add(dk(doc));
+  };
+  const FRAC_BAND=0.30; // margen máx. de diferencia de cambio para asociar todas las líneas del mes
   for(const [,idxs] of byProv){
     if(idxs.length<2)continue;
     const prov=provOf[idxs[0]];
     const pRut=normRut(prov.rut);
     if(!pRut)continue;
     const pdocs=docsDB.filter(d=>normRut(d.rut)===pRut&&d.total>0&&!usedDoc.has(dk(d)));
+    if(!pdocs.length)continue;
+    const monthGrp=doc=>{const dd=parseDate(doc.fecha);return idxs.filter(i=>!result[i]).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));};
+
+    if(pdocs.length===1){
+      // UN SOLO documento del proveedor en el mes → se asocia a sus líneas del mes
+      const doc=pdocs[0];
+      const grp=monthGrp(doc);
+      if(grp.length>=2){
+        // si una sola línea ya calza con el total, no es fraccionado (lo toma el caso 1→1)
+        const singleMatch=grp.some(i=>Math.abs((txs[i].debito||0)-doc.total)<Math.max(100,doc.total*0.02));
+        if(!singleMatch){
+          const sub=subsetSum(grp.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,6,0.08);
+          if(sub)assignFrac(sub.map(o=>o.ref),doc);                       // subconjunto exacto si existe
+          else{
+            const sumAll=grp.reduce((s,i)=>s+(txs[i].debito||0),0);
+            if(Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND)assignFrac(grp,doc); // si no, todas las del mes
+          }
+        }
+      }
+      continue;
+    }
+    // Varios documentos del proveedor → buscar subconjunto de TX por documento (mismo mes, ±5%)
     for(const doc of pdocs){
       if(usedDoc.has(dk(doc)))continue;
-      const dd=parseDate(doc.fecha);
-      const pool=idxs.filter(i=>!result[i]).filter(i=>{
-        const t=parseDate(txs[i].fecha);return isNaN(dd)||isNaN(t)||Math.abs((t-dd)/864e5)<=15;
-      }).map(i=>({amt:txs[i].debito||0,ref:i}));
+      const pool=monthGrp(doc).map(i=>({amt:txs[i].debito||0,ref:i}));
       if(pool.length<2)continue;
       const sub=subsetSum(pool,doc.total,2,6,0.05);
-      if(sub){
-        const ids=sub.map(o=>o.ref);
-        const sum=ids.reduce((s,i)=>s+(txs[i].debito||0),0);
-        const diffAmt=sum-doc.total;
-        const obs=Math.abs(diffAmt)/doc.total>0.001?`Diferencia cambio ${(Math.abs(diffAmt)/doc.total*100).toFixed(2)}%`:"";
-        ids.forEach((i,k)=>{result[i]={...doc,_frac:true,_fracMain:k===0,_diffAmt:k===0?diffAmt:null,_obs:k===0?obs:""};});
-        usedDoc.add(dk(doc));
-      }
+      if(sub)assignFrac(sub.map(o=>o.ref),doc);
     }
   }
 
