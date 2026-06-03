@@ -1586,7 +1586,8 @@ function App(){
   const g66Mark=(sz,col,filled)=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
     filled?e("circle",{cx:24,cy:24,r:23,fill:col})
           :e("circle",{cx:24,cy:24,r:22,fill:"none",stroke:col,strokeWidth:2}),
-    e("path",{d:"M13 24 q5.5 -7 11 0 t11 0",fill:"none",stroke:filled?C.brand:col,strokeWidth:3.4,strokeLinecap:"round",strokeLinejoin:"round"}));
+    e("path",{d:"M12 23 C13.5 19 15 18 17 18 C19.5 18 21.5 27 24 27 C26.5 27 28.5 18 31 18 C33 18 34.5 19 36 23",
+      fill:"none",stroke:filled?C.brand:col,strokeWidth:3.3,strokeLinecap:"round",strokeLinejoin:"round"}));
   const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"18px 24px",display:"flex",alignItems:"center",gap:18,boxShadow:"0 2px 12px rgba(0,0,0,.3)"}},
     e("div",{style:{display:"flex",alignItems:"center",gap:13}},
       g66Mark(42,C.white,true),
