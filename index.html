@@ -1580,14 +1580,17 @@ function App(){
       onChange:ev=>{const f=ev.target.files[0];if(f)onFile(f);ev.target.value="";}}));
 
   // ════════ HEADER ════════
-  // Logo Global66 (recreación SVG: onda simétrica tipo "~").
-  //  filled=true → círculo blanco + onda azul (para la barra azul)
-  //  filled=false → contorno + onda en un color (para marca de agua)
-  const g66Mark=(sz,col,filled)=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
-    filled?e("circle",{cx:24,cy:24,r:23,fill:col})
-          :e("circle",{cx:24,cy:24,r:22,fill:"none",stroke:col,strokeWidth:2}),
-    e("path",{d:"M12 23 C13.5 19 15 18 17 18 C19.5 18 21.5 27 24 27 C26.5 27 28.5 18 31 18 C33 18 34.5 19 36 23",
-      fill:"none",stroke:filled?C.brand:col,strokeWidth:3.3,strokeLinecap:"round",strokeLinejoin:"round"}));
+  // Logo Global66 (recreación SVG). Onda: dos crestas con valle al centro y puntas hacia arriba.
+  const WAVE="M12 22 C13 18 16 18 17.5 21 C19 24 21 26 24 26 C27 26 29 24 30.5 21 C32 18 35 18 36 22";
+  // Logo real para la barra azul: aro blanco + círculo azul + onda blanca (así resalta sobre el azul)
+  const g66Logo=sz=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
+    e("circle",{cx:24,cy:24,r:24,fill:C.white}),
+    e("circle",{cx:24,cy:24,r:20,fill:C.brand}),
+    e("path",{d:WAVE,fill:"none",stroke:C.white,strokeWidth:3.2,strokeLinecap:"round",strokeLinejoin:"round"}));
+  // Versión monocroma para la marca de agua
+  const g66Watermark=(sz,col)=>e("svg",{width:sz,height:sz,viewBox:"0 0 48 48",style:{display:"block",flex:"none"}},
+    e("circle",{cx:24,cy:24,r:22,fill:"none",stroke:col,strokeWidth:2}),
+    e("path",{d:WAVE,fill:"none",stroke:col,strokeWidth:3.2,strokeLinecap:"round",strokeLinejoin:"round"}));
   const authBox=e("div",{style:{display:"flex",gap:8,fontSize:11,alignItems:"center",justifyContent:"flex-end"}},
     sb&&(session
       ?e("div",{style:{display:"flex",gap:6,alignItems:"center"}},
@@ -1597,7 +1600,7 @@ function App(){
   const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"18px 24px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 12px rgba(0,0,0,.3)"}},
     e("div",{style:{flex:1}}),  // espaciador izquierdo (mantiene la marca centrada)
     e("div",{style:{display:"flex",alignItems:"center",gap:13}},   // marca CENTRADA
-      g66Mark(42,C.white,true),
+      g66Logo(42),
       e("div",null,
         e("div",{style:{display:"flex",alignItems:"baseline",gap:8}},
           e("span",{style:{fontWeight:800,fontSize:20,letterSpacing:.2,color:C.white}},"Global66"),
@@ -1768,7 +1771,7 @@ function App(){
   // interfieren con la info: el logo solo se ve en las zonas oscuras vacías.
   const watermark=e("div",{style:{position:"fixed",left:0,right:0,bottom:0,height:"55vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",paddingBottom:48,pointerEvents:"none",zIndex:0,overflow:"hidden"}},
     e("div",{style:{opacity:0.05,display:"flex",flexDirection:"column",alignItems:"center",gap:10}},
-      g66Mark(300,C.white,false),
+      g66Watermark(300,C.white),
       e("div",{style:{fontWeight:800,fontSize:74,letterSpacing:3,color:C.white,lineHeight:1}},"Global66")));
 
   // Pestañas en la zona oscura (EECC / Proveedores / Documentos)
