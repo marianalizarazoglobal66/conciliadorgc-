@@ -1073,19 +1073,38 @@ function assignDocs(txs,provs,docsDB){
   const provOf=txs.map((tx,i)=>excluded[i]?null:matchProv(tx.tipo,tx.tercero,provs));
   const usedDoc=new Set();
   const dk=d=>d.tipo+"|"+d.ndoc+"|"+d.rut;
+  const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
+  const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
 
-  // índices activos agrupados por proveedor
+  // ── REVERSADOS — compra que coincide EXACTO con el valor de una reversa del mismo mes ──
+  // Ambas líneas se marcan "Reversado", quedan en rojo y la compra no se cruza con documento.
+  const revIdx=txs.map((tx,i)=>excluded[i]?i:-1).filter(i=>i>=0);  // líneas de reversa/devolución
+  const usedRev=new Set();
+  txs.forEach((tx,i)=>{
+    if(excluded[i]||result[i]||!(tx.debito>0))return;              // solo compras (débito) no excluidas
+    const td=parseDate(tx.fecha);
+    for(const ri of revIdx){
+      if(usedRev.has(ri))continue;
+      const rv=txs[ri];
+      const rval=(rv.abono>0?rv.abono:rv.debito)||0;               // valor de la reversa (abono o débito)
+      if(rval>0&&Math.abs(rval-tx.debito)<1&&(sameMonth(parseDate(rv.fecha),td)||isNaN(td))){
+        result[i]={_reversado:true,_obs:"Reversado"};
+        result[ri]={_reversado:true,_obs:"Reversado"};
+        usedRev.add(ri);break;
+      }
+    }
+  });
+
+  // índices activos agrupados por proveedor (excluye reversados ya marcados)
   const byProv=new Map();
   txs.forEach((tx,i)=>{
-    if(excluded[i]||!provOf[i]||!(tx.debito>0))return;
+    if(excluded[i]||result[i]||!provOf[i]||!(tx.debito>0))return;
     const id=provOf[i].id;
     if(!byProv.has(id))byProv.set(id,[]);
     byProv.get(id).push(i);
   });
 
   // ── MOTOR DE ASIGNACIÓN (por proveedor · alcance: mismo mes) ──────────────
-  const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
-  const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
   const FRAC_BAND=0.30;   // fraccionado N→1 (incluye diferencia de cambio)
   const SUM_BAND=0.05;    // consolidado 1→N (suma de docs ≈ egreso)
   const EXACT_BAND=0.02;  // 1→1 casi exacto
@@ -1306,18 +1325,20 @@ function exportXLSX(txs,assignments,provMatches,periodo){
     const excl=isExcluded(r);
     const p=excl?null:provMatches[i];
     const d=assignments[i];
+    const rev=d&&d._reversado;
+    const dd=d&&!d._reversado?d:null;
     let bg="#FFFFFF";
-    if(excl)bg="#FBE9E7";else if(d&&d._frac)bg="#FFF4D6";else if(d&&d._multi)bg="#E3F0FF";else if(d)bg="#EAF7EC";
-    const mgr=excl?"":d?(d._frac?"FRACC.":d._multi?"MULTI":"SI"):"";
+    if(excl||rev)bg="#FBE9E7";else if(dd&&dd._frac)bg="#FFF4D6";else if(dd&&dd._multi)bg="#E3F0FF";else if(dd)bg="#EAF7EC";
+    const mgr=(excl||rev)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
     let diff="";
-    if(d&&!(d._frac&&!d._fracMain)&&d._diffAmt!=null)diff=fmtCLP(d._diffAmt);
-    const obs=excl?"EXCLUIDA":(d?d._obs:"");
+    if(dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null)diff=fmtCLP(dd._diffAmt);
+    const obs=rev?"REVERSADO":(excl?"EXCLUIDA":(dd?dd._obs:""));
     const td=(v,al)=>`<td style="padding:4px;text-align:${al||'left'}">${esc(v)}</td>`;
     h+=`<tr style="background:${bg}">`+
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
-      td(excl?"EXCLUIDA":(p?p.nombre:(d&&d.razon?d.razon+" (por monto)":"Sin match")))+td(p?p.rut:(d?d.rut:""))+
-      td(mgr,'center')+td(d?d.codigo:"")+td(d?d.centroCosto:"")+td(d?d.ndoc:"")+td(d&&d.total?"$"+fmtCLP(d.total):"",'right')+
+      td(rev?"REVERSADO":(excl?"EXCLUIDA":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))))+td(rev?"":(p?p.rut:(dd?dd.rut:"")))+
+      td(mgr,'center')+td(dd?dd.codigo:"")+td(dd?dd.centroCosto:"")+td(dd?dd.ndoc:"")+td(dd&&dd.total?"$"+fmtCLP(dd.total):"",'right')+
       td(diff?"$"+diff:"",'right')+td(obs)+'</tr>';
   });
   h+='</table>';
@@ -1394,19 +1415,20 @@ function App(){
   const txProvMatches=useMemo(()=>txs.map(r=>isExcluded(r)?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs]);
   // ── useMemo: estadísticas ─────────────────────────────────────────────────
   const {matchCount,docCount,exclCount}=useMemo(()=>({
-    matchCount:txs.reduce((n,_,i)=>n+((txProvMatches[i]||(assignments[i]&&assignments[i]._byAmount))?1:0),0),
-    docCount:assignments.filter(Boolean).length,
+    matchCount:txs.reduce((n,_,i)=>{const a=assignments[i];if(a&&a._reversado)return n;return n+((txProvMatches[i]||(a&&a._byAmount))?1:0);},0),
+    docCount:assignments.filter(a=>a&&!a._reversado).length,
     exclCount:txs.filter(isExcluded).length,
   }),[txProvMatches,assignments,txs]);
   const pctId=useMemo(()=>{const den=txs.length-exclCount;return den>0?Math.round(matchCount/den*100):0;},[matchCount,exclCount,txs]);
   // ── useMemo: filtrado + vista ─────────────────────────────────────────────
   const txView=useMemo(()=>txs.map((r,i)=>({...r,_origIdx:i,_prov:txProvMatches[i]})).filter(r=>{
     const p=r._prov,d=assignments[r._origIdx];
-    const hasProv=p||(d&&d._byAmount);
+    const realDoc=d&&!d._reversado;
+    const hasProv=(p||(d&&d._byAmount))&&!(d&&d._reversado);
     if(filter==="match"&&!hasProv)return false;
     if(filter==="nomatch"&&hasProv)return false;
-    if(filter==="condoc"&&!d)return false;
-    if(filter==="sindoc"&&(d||!hasProv))return false;
+    if(filter==="condoc"&&!realDoc)return false;
+    if(filter==="sindoc"&&(realDoc||!hasProv))return false;
     if(search){const s=search.toLowerCase();if(!String(r.tipo||"").toLowerCase().includes(s)&&!String(r.tercero||"").toLowerCase().includes(s))return false;}
     return true;
   }),[txs,txProvMatches,assignments,filter,search]);
@@ -1658,9 +1680,11 @@ function App(){
               borderBottom:"1px solid "+C.border,fontSize:11,fontWeight:700,position:"sticky",top:0}},hh)))),
         e("tbody",null,txPage.map(r=>{
           const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
-          const rowClass=excl?"rexcl":d&&d._frac?"rfrac":d&&d._multi?"rmulti":d?"rm":"rn";
-          const showDiff=d&&!(d._frac&&!d._fracMain)&&d._diffAmt!=null;
-          const mgr=excl?null:d?(d._frac?badge("🔀 Fracc.",C.yellow,C.bg):d._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
+          const rev=d&&d._reversado;                 // compra/reversa pareada
+          const dd=d&&!d._reversado?d:null;          // documento real (no reversado)
+          const rowClass=(excl||rev)?"rexcl":dd&&dd._frac?"rfrac":dd&&dd._multi?"rmulti":dd?"rm":"rn";
+          const showDiff=dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null;
+          const mgr=(excl||rev)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
           return e("tr",{key:i,className:rowClass},
             td(fmtDate(r.fecha),"left",C.muted),
@@ -1669,15 +1693,15 @@ function App(){
             td(r.tarjeta?badge(r.tarjeta,"rgba(163,113,247,.2)",C.purple):"","center"),
             td(r.debito?fmtCLP(r.debito):"","right",C.red),
             td(r.abono?fmtCLP(r.abono):"","right",C.green),
-            td(excl?badge("⛔ Excluida",C.red):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(d&&d.razon?badge(d.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
-            td(p?p.rut:(d?d.rut:""),"left",C.muted),
-            td(mgr||"—","center",d?null:C.muted),
-            td(d?d.codigo:"","left",C.muted),
-            td(d?d.centroCosto:"","left",C.muted),
-            td(d?d.ndoc:"","left",C.teal),
-            td(d&&d.total?fmtCLP(d.total):"","right",C.teal),
-            td(showDiff?fmtCLP(d._diffAmt):"","right",showDiff?diffColor(d._diffAmt,r.debito):C.muted),
-            td(excl?"⛔ Excluida":(d&&d._obs?d._obs:""),"left",excl?C.red:C.yellow));
+            td(rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
+            td(rev?"":(p?p.rut:(dd?dd.rut:"")),"left",C.muted),
+            td(mgr||"—","center",dd?null:C.muted),
+            td(dd?dd.codigo:"","left",C.muted),
+            td(dd?dd.centroCosto:"","left",C.muted),
+            td(dd?dd.ndoc:"","left",C.teal),
+            td(dd&&dd.total?fmtCLP(dd.total):"","right",C.teal),
+            td(showDiff?fmtCLP(dd._diffAmt):"","right",showDiff?diffColor(dd._diffAmt,r.debito):C.muted),
+            td(rev?"Reversado":(excl?"⛔ Excluida":(dd&&dd._obs?dd._obs:"")),"left",(rev||excl)?C.red:C.yellow));
         })))),
     // paginación
     processed&&txView.length>0&&e("div",{style:{display:"flex",alignItems:"center",gap:8,marginTop:12,flexWrap:"wrap"}},
