@@ -978,14 +978,18 @@ const matchProv=(desc,tercero,provs)=>{
   // PASO 1 — RUT exacto (prioridad máxima)
   const normT=normRut(terceroN);
   if(normT.length>=3){const byRut=provs.find(p=>p.rut&&normRut(p.rut)===normT);if(byRut)return byRut;}
-  // PASO 2 — Fuzzy match por nombre (≥60% palabras del proveedor presentes en el tercero)
-  const tCore=stripLegal(terceroN);
-  if(tCore.length>=4){
+  // PASO 2 — Fuzzy por nombre: coincidencia de PALABRAS COMPLETAS (no substring) y
+  // se exige ≥2 palabras en común y ≥60%. Los nombres de una sola palabra (ej. "Justo SPA",
+  // "Big Box Chile"→"chile") NO hacen fuzzy: se resuelven por keyword. Evita falsos positivos
+  // como "fintechile"⊃"chile" o "Justo"→"Justo SPA".
+  const tWords=new Set(stripLegal(terceroN).split(/\s+/).filter(w=>w.length>=4));
+  if(tWords.size){
     let best=null,bestScore=0;
     for(const p of provs){
       const pWords=stripLegal(p.nombre).split(/\s+/).filter(w=>w.length>=4);
-      if(!pWords.length)continue;
-      const matched=pWords.filter(w=>tCore.includes(w));
+      if(pWords.length<2)continue;
+      const matched=pWords.filter(w=>tWords.has(w));
+      if(matched.length<2)continue;
       const ratio=matched.length/pWords.length;
       if(ratio>=0.6){const sc=ratio*100+matched.join("").length;if(sc>bestScore){bestScore=sc;best=p;}}
     }
@@ -1175,13 +1179,18 @@ function assignDocs(txs,provs,docsDB){
       if(best)assignFrac(best.map(o=>o.ref),doc);
     }
 
-    // 4) 1→1 aproximado — el resto de líneas al doc disponible más cercano (mismo mes, banda 15%)
+    // 4) 1→1 — el resto de líneas se asocian al documento del proveedor del MISMO MES más
+    // cercano por monto, SIN límite de diferencia (se muestra la diferencia, aunque sea grande).
+    // Así se traen documentos con gran diferencia de pago (ej. Marbella) y los de fechas algo
+    // separadas dentro del mes (ej. Twilio).
     for(const i of idxs){
-      if(!tUnused(i))continue; const amt=txs[i].debito||0;
-      const cands=getDocCandidates(txs[i],prov,docsDB).filter(dUnused);
-      if(cands.length&&amt>0&&Math.abs(cands[0].total-amt)/amt<=ONE_BAND){
-        result[i]={...cands[0],_diffAmt:amt-cands[0].total,_obs:""};usedDoc.add(dk(cands[0]));
-      }
+      if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
+      const cands=allDocs.filter(dUnused).filter(d=>sameMonth(parseDate(d.fecha),td)||isNaN(td));
+      if(!cands.length)continue;
+      cands.sort((a,b)=>Math.abs(a.total-amt)-Math.abs(b.total-amt));
+      const doc=cands[0];
+      const obs=doc.total>0&&Math.abs(amt-doc.total)/doc.total>0.03?"Diferencia con documento":"";
+      result[i]={...doc,_diffAmt:amt-doc.total,_obs:obs};usedDoc.add(dk(doc));
     }
   }
 
