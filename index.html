@@ -1106,6 +1106,7 @@ function assignDocs(txs,provs,docsDB){
     result[i]={...docs[0],
       ndoc:docs.map(d=>d.ndoc).join(" / "),
       codigo:[...new Set(docs.map(d=>d.codigo).filter(Boolean))].join(", "),
+      centroCosto:[...new Set(docs.flatMap(d=>String(d.centroCosto||"").split(",").map(s=>s.trim()).filter(Boolean)))].join(", "),
       total:totalSum,_multi:docs.length>1,_diffAmt:(txs[i].debito||0)-totalSum,_obs:""};
   };
 
@@ -1235,20 +1236,30 @@ function parseDocs(data){
     rut:col("rut"),
     razon:col("razón","razon","social","proveedor","nombre"),
     fecha:col("fecha"),
-    total:col("total","monto","importe","valor"),
+    total:col("total facturado","total","monto","importe","valor"),
     codigo:col("código","codigo","cuenta","cod"),
     descripcion:col("descripción","descripcion","glosa","detalle"),
+    centro:col("código centro costo","centro de costo","centro costo","cod centro","ccosto"),
   };
-  const rows=[];
+  // El reporte trae una fila por línea/centro de costo: se AGRUPA por documento
+  // (Tipo|Nº|RUT) para no duplicar totales y para consolidar los centros de costo.
+  const map=new Map();
   for(let i=hi+1;i<data.length;i++){
     const row=data[i]||[];
     const g=idx=>idx>=0?String(row[idx]==null?"":row[idx]).trim():"";
     const ndoc=g(ci.ndoc),rut=g(ci.rut),razon=g(ci.razon);
     if(!ndoc&&!rut&&!razon)continue;
-    rows.push({tipo:g(ci.tipo),ndoc,rut,razon,fecha:g(ci.fecha),
-      total:numCLP(g(ci.total)),codigo:g(ci.codigo),descripcion:g(ci.descripcion)});
+    const key=g(ci.tipo)+"|"+ndoc+"|"+rut;
+    const cc=g(ci.centro);
+    if(map.has(key)){
+      if(cc){const d=map.get(key);if(!d._cc.has(cc)){d._cc.add(cc);d.centroCosto=d.centroCosto?d.centroCosto+", "+cc:cc;}}
+    }else{
+      map.set(key,{tipo:g(ci.tipo),ndoc,rut,razon,fecha:g(ci.fecha),
+        total:numCLP(g(ci.total)),codigo:g(ci.codigo),descripcion:g(ci.descripcion),
+        centroCosto:cc,_cc:new Set(cc?[cc]:[])});
+    }
   }
-  return rows;
+  return [...map.values()].map(d=>{delete d._cc;return d;});
 }
 
 // ══ PARSER PROVEEDORES (import Excel) ═════════════════════════════════════════
@@ -1286,11 +1297,11 @@ function exportXLSX(txs,assignments,provMatches,periodo){
   const docCount=assignments.filter(Boolean).length;
   const exclCount=txs.filter(isExcluded).length;
   let h='<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial;font-size:11px">';
-  h+=`<tr><td colspan="14" style="background:#0D1117;color:#fff;font-size:16px;font-weight:bold;padding:8px">MOVIMIENTOS TARJETA — ${esc(periodo||"PERÍODO")}</td></tr>`;
-  h+=`<tr><td colspan="14" style="background:#1B279E;color:#fff;padding:6px">Global66 · Cruce con Listado Manager</td></tr>`;
-  h+=`<tr><td colspan="14" style="background:#1C2128;color:#E6EDF3;padding:6px">Total: ${total}  |  Con proveedor: ${matchCount}  |  Con doc: ${docCount}  |  Excluidas: ${exclCount}</td></tr>`;
+  h+=`<tr><td colspan="15" style="background:#0D1117;color:#fff;font-size:16px;font-weight:bold;padding:8px">MOVIMIENTOS TARJETA — ${esc(periodo||"PERÍODO")}</td></tr>`;
+  h+=`<tr><td colspan="15" style="background:#1B279E;color:#fff;padding:6px">Global66 · Cruce con Listado Manager</td></tr>`;
+  h+=`<tr><td colspan="15" style="background:#1C2128;color:#E6EDF3;padding:6px">Total: ${total}  |  Con proveedor: ${matchCount}  |  Con doc: ${docCount}  |  Excluidas: ${exclCount}</td></tr>`;
   const th=(t,c)=>`<td style="background:${c};color:#fff;font-weight:bold;padding:5px">${t}</td>`;
-  h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Código','#1A7F37')+th('N° Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
+  h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Código','#1A7F37')+th('Centro Costo','#1A7F37')+th('N° Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
   txs.forEach((r,i)=>{
     const excl=isExcluded(r);
     const p=excl?null:provMatches[i];
@@ -1306,7 +1317,7 @@ function exportXLSX(txs,assignments,provMatches,periodo){
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
       td(excl?"EXCLUIDA":(p?p.nombre:(d&&d.razon?d.razon+" (por monto)":"Sin match")))+td(p?p.rut:(d?d.rut:""))+
-      td(mgr,'center')+td(d?d.codigo:"")+td(d?d.ndoc:"")+td(d&&d.total?"$"+fmtCLP(d.total):"",'right')+
+      td(mgr,'center')+td(d?d.codigo:"")+td(d?d.centroCosto:"")+td(d?d.ndoc:"")+td(d&&d.total?"$"+fmtCLP(d.total):"",'right')+
       td(diff?"$"+diff:"",'right')+td(obs)+'</tr>';
   });
   h+='</table>';
@@ -1422,9 +1433,9 @@ function App(){
         const {data:pv,error:pe}=await sb.from("proveedores").select("id,nombre,rut,kw").order("id");
         if(pe)throw pe;
         if(pv&&pv.length)setProvs(pv);
-        const {data:dc,error:de}=await sb.from("documentos_manager").select("tipo,ndoc,rut,razon,fecha,total,codigo,descripcion");
+        const {data:dc,error:de}=await sb.from("documentos_manager").select("tipo,ndoc,rut,razon,fecha,total,codigo,descripcion,centro_costo");
         if(de)throw de;
-        if(dc)setDocsDB(dc);
+        if(dc)setDocsDB(dc.map(d=>({...d,centroCosto:d.centro_costo||""})));
         setDbMsg("☁ Conectado a la nube.");
       }catch(err){setDbMsg("⚠ Sin conexión a la nube — usando datos locales. ("+(err.message||err)+")");}
     })();
@@ -1474,14 +1485,15 @@ function App(){
       const data=await readSheet(file);
       const rows=parseDocs(data);
       if(!rows.length){setDocsMsg("❌ No se detectaron documentos válidos.");return;}
-      const clean=rows.map(r=>({tipo:r.tipo,ndoc:r.ndoc,rut:r.rut,razon:r.razon,fecha:r.fecha,total:r.total,codigo:r.codigo,descripcion:r.descripcion}));
+      const clean=rows.map(r=>({tipo:r.tipo,ndoc:r.ndoc,rut:r.rut,razon:r.razon,fecha:r.fecha,total:r.total,codigo:r.codigo,descripcion:r.descripcion,centroCosto:r.centroCosto||""}));
       if(sb&&session){
         setDocsMsg("⏳ Guardando en la nube…");
         const del=await sb.from("documentos_manager").delete().gt("id",0);
         if(del.error)throw del.error;
-        // insertar por lotes para evitar payloads enormes
-        for(let i=0;i<clean.length;i+=500){
-          const ins=await sb.from("documentos_manager").insert(clean.slice(i,i+500));
+        // insertar por lotes (mapeando centroCosto → columna centro_costo)
+        const dbRows=clean.map(r=>({tipo:r.tipo,ndoc:r.ndoc,rut:r.rut,razon:r.razon,fecha:r.fecha,total:r.total,codigo:r.codigo,descripcion:r.descripcion,centro_costo:r.centroCosto}));
+        for(let i=0;i<dbRows.length;i+=500){
+          const ins=await sb.from("documentos_manager").insert(dbRows.slice(i,i+500));
           if(ins.error)throw ins.error;
         }
         setDocsDB(clean);setDocsName(file.name);
@@ -1641,8 +1653,8 @@ function App(){
     processed&&e("div",{style:{border:"1px solid "+C.border,borderRadius:10,overflow:"auto",background:C.surf}},
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12.5}},
         e("thead",null,e("tr",{style:{position:"sticky",top:0}},
-          ["Fecha","Tipo Transacción","Nombre Tercero / Comercio","Tar.","Débito","Abono","Proveedor Plataformas","RUT","Manager","Código","N° Doc","Total Doc","Diferencia","Observaciones"].map((hh,j)=>
-            e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===11||j===12?"right":"left",
+          ["Fecha","Tipo Transacción","Nombre Tercero / Comercio","Tar.","Débito","Abono","Proveedor Plataformas","RUT","Manager","Código","Centro Costo","N° Doc","Total Doc","Diferencia","Observaciones"].map((hh,j)=>
+            e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===12||j===13?"right":"left",
               borderBottom:"1px solid "+C.border,fontSize:11,fontWeight:700,position:"sticky",top:0}},hh)))),
         e("tbody",null,txPage.map(r=>{
           const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
@@ -1661,6 +1673,7 @@ function App(){
             td(p?p.rut:(d?d.rut:""),"left",C.muted),
             td(mgr||"—","center",d?null:C.muted),
             td(d?d.codigo:"","left",C.muted),
+            td(d?d.centroCosto:"","left",C.muted),
             td(d?d.ndoc:"","left",C.teal),
             td(d&&d.total?fmtCLP(d.total):"","right",C.teal),
             td(showDiff?fmtCLP(d._diffAmt):"","right",showDiff?diffColor(d._diffAmt,r.debito):C.muted),
@@ -1734,7 +1747,7 @@ function App(){
     docsMsg&&e("div",{style:{marginBottom:12,fontSize:13,color:docsMsg[0]==="✅"?C.green:C.red}},docsMsg),
     e("div",{style:{border:"1px solid "+C.border,borderRadius:10,overflow:"auto",background:C.surf,maxHeight:600}},
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12.5}},
-        e("thead",null,e("tr",null,["Tipo","N° Doc","RUT","Razón Social","Fecha","Total (CLP)","Código","Descripción"].map((hh,j)=>
+        e("thead",null,e("tr",null,["Tipo","N° Doc","RUT","Razón Social","Fecha","Total (CLP)","Código","Centro Costo","Descripción"].map((hh,j)=>
           e("th",{key:j,style:{background:C.surf2,color:C.teal,padding:"9px 9px",textAlign:j===5?"right":"left",borderBottom:"1px solid "+C.border,position:"sticky",top:0,fontSize:11,fontWeight:700}},hh)))),
         e("tbody",null,docsDB.slice(0,1000).map((d,j)=>e("tr",{key:j,className:"rn"},
           e("td",{style:tdP(C.muted)},d.tipo),
@@ -1744,6 +1757,7 @@ function App(){
           e("td",{style:tdP(C.muted)},fmtDate(d.fecha)),
           e("td",{style:{...tdP(C.teal),textAlign:"right"}},fmtCLP(d.total)),
           e("td",{style:tdP(C.muted)},d.codigo),
+          e("td",{style:tdP(C.acL)},d.centroCosto),
           e("td",{style:tdP(C.muted)},d.descripcion))))),
       docsDB.length>1000&&e("div",{style:{padding:10,fontSize:12,color:C.muted,textAlign:"center"}},"Mostrando primeros 1000")));
 
