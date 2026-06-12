@@ -1364,11 +1364,11 @@ function exportXLSX(txs,assignments,provMatches,periodo){
   const docCount=assignments.filter(Boolean).length;
   const exclCount=txs.filter(isExcluded).length;
   let h='<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial;font-size:11px">';
-  h+=`<tr><td colspan="15" style="background:#0D1117;color:#fff;font-size:16px;font-weight:bold;padding:8px">MOVIMIENTOS TARJETA — ${esc(periodo||"PERÍODO")}</td></tr>`;
-  h+=`<tr><td colspan="15" style="background:#1B279E;color:#fff;padding:6px">Global66 · Cruce con Listado Manager</td></tr>`;
-  h+=`<tr><td colspan="15" style="background:#1C2128;color:#E6EDF3;padding:6px">Total: ${total}  |  Con proveedor: ${matchCount}  |  Con doc: ${docCount}  |  Excluidas: ${exclCount}</td></tr>`;
+  h+=`<tr><td colspan="16" style="background:#0D1117;color:#fff;font-size:16px;font-weight:bold;padding:8px">MOVIMIENTOS TARJETA — ${esc(periodo||"PERÍODO")}</td></tr>`;
+  h+=`<tr><td colspan="16" style="background:#1B279E;color:#fff;padding:6px">Global66 · Cruce con Listado Manager</td></tr>`;
+  h+=`<tr><td colspan="16" style="background:#1C2128;color:#E6EDF3;padding:6px">Total: ${total}  |  Con proveedor: ${matchCount}  |  Con doc: ${docCount}  |  Excluidas: ${exclCount}</td></tr>`;
   const th=(t,c)=>`<td style="background:${c};color:#fff;font-weight:bold;padding:5px">${t}</td>`;
-  h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Código','#1A7F37')+th('Centro Costo','#1A7F37')+th('N° Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
+  h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Cod. Servicio','#1A7F37')+th('Centro Costo','#1A7F37')+th('N° Doc','#1A7F37')+th('Fecha Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
   txs.forEach((r,i)=>{
     const excl=isExcluded(r);
     const p=excl?null:provMatches[i];
@@ -1390,12 +1390,12 @@ function exportXLSX(txs,assignments,provMatches,periodo){
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
       td(provTxt)+td(rutTxt)+
-      td(mgr,'center')+td(d0?d0.codigo:"")+td(d0?d0.centroCosto:"")+td(d0?d0.ndoc:"")+td(d0&&d0.total?"$"+fmtCLP(d0.total):"",'right')+
+      td(mgr,'center')+td(d0?d0.codigo:"")+td(d0?d0.centroCosto:"")+td(d0?d0.ndoc:"")+td(d0?fmtDate(d0.fecha):"")+td(d0&&d0.total?"$"+fmtCLP(d0.total):"",'right')+
       td(diff?"$"+diff:"",'right')+td(obs)+'</tr>';
     if(docs)for(const dx of docs.slice(1)){
       h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
         td(p?p.nombre:(dd.razon||""))+td(rutTxt)+td("MULTI",'center')+
-        td(dx.codigo||"")+td(dx.centroCosto||"")+td(dx.ndoc||"")+td(dx.total?"$"+fmtCLP(dx.total):"",'right')+td("")+td("")+'</tr>';
+        td(dx.codigo||"")+td(dx.centroCosto||"")+td(dx.ndoc||"")+td(dx.fecha?fmtDate(dx.fecha):"")+td(dx.total?"$"+fmtCLP(dx.total):"",'right')+td("")+td("")+'</tr>';
     }
   });
   h+='</table>';
@@ -1690,8 +1690,7 @@ function App(){
       :e("button",{className:"btnh",onClick:()=>{setShowLogin(true);setAuthErr("");},style:{background:C.white,color:C.brand,border:"none",borderRadius:7,padding:"6px 13px",fontSize:11,fontWeight:700}},"🔐 Iniciar sesión")));
   const header=e("div",{style:{position:"sticky",top:0,zIndex:50,background:C.brand,borderBottom:"1px solid "+C.brandDark,padding:"18px 24px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 2px 12px rgba(0,0,0,.3)"}},
     e("div",{style:{flex:1}}),  // espaciador izquierdo (mantiene la marca centrada)
-    e("div",{style:{display:"flex",alignItems:"center",gap:13}},   // marca CENTRADA
-      g66Logo(42),
+    e("div",{style:{display:"flex",alignItems:"center",gap:13}},   // marca CENTRADA (solo texto, sin logo)
       e("div",null,
         e("div",{style:{display:"flex",alignItems:"baseline",gap:8}},
           e("span",{style:{fontWeight:800,fontSize:20,letterSpacing:.2,color:C.white}},"Global66"),
@@ -1732,8 +1731,8 @@ function App(){
     processed&&e("div",{style:{border:"1px solid "+C.border,borderRadius:10,overflow:"auto",background:C.surf}},
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12.5}},
         e("thead",null,e("tr",{style:{position:"sticky",top:0}},
-          ["Fecha","Tipo Transacción","Nombre Tercero / Comercio","Tar.","Débito","Abono","Proveedor Plataformas","RUT","Manager","Código","Centro Costo","N° Doc","Total Doc","Diferencia","Observaciones"].map((hh,j)=>
-            e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===12||j===13?"right":"left",
+          ["Fecha","Tipo Transacción","Nombre Tercero / Comercio","Tar.","Débito","Abono","Proveedor Plataformas","RUT","Manager","Cod. Servicio","Centro Costo","N° Doc","Fecha Doc","Total Doc","Diferencia","Observaciones"].map((hh,j)=>
+            e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===13||j===14?"right":"left",
               borderBottom:"1px solid "+C.border,fontSize:11,fontWeight:700,position:"sticky",top:0}},hh)))),
         e("tbody",null,txPage.flatMap(r=>{
           const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
@@ -1761,6 +1760,7 @@ function App(){
             td(d0?d0.codigo:"","left",C.muted),
             td(d0?d0.centroCosto:"","left",C.muted),
             td(d0?d0.ndoc:"","left",C.teal),
+            td(d0?fmtDate(d0.fecha):"","left",C.muted),
             td(d0&&d0.total?fmtCLP(d0.total):"","right",C.teal),
             td(showDiff?fmtCLP(dd._diffAmt):"","right",showDiff?diffColor(dd._diffAmt,r.debito):C.muted),
             td(rev?"Reversado":(excl?"⛔ Excluida":(dd&&dd._obs?dd._obs:"")),"left",(rev||excl)?C.red:C.yellow));
@@ -1774,6 +1774,7 @@ function App(){
             td(dx.codigo||"","left",C.muted),
             td(dx.centroCosto||"","left",C.muted),
             td(dx.ndoc||"","left",C.teal),
+            td(dx.fecha?fmtDate(dx.fecha):"","left",C.muted),
             td(dx.total?fmtCLP(dx.total):"","right",C.teal),
             td("","right"),td("","left")));
           return [mainRow,...extra];
@@ -1846,7 +1847,7 @@ function App(){
     docsMsg&&e("div",{style:{marginBottom:12,fontSize:13,color:docsMsg[0]==="✅"?C.green:C.red}},docsMsg),
     e("div",{style:{border:"1px solid "+C.border,borderRadius:10,overflow:"auto",background:C.surf,maxHeight:600}},
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12.5}},
-        e("thead",null,e("tr",null,["Tipo","N° Doc","RUT","Razón Social","Fecha","Total (CLP)","Código","Centro Costo","Descripción"].map((hh,j)=>
+        e("thead",null,e("tr",null,["Tipo","N° Doc","RUT","Razón Social","Fecha","Total (CLP)","Cod. Servicio","Centro Costo","Descripción"].map((hh,j)=>
           e("th",{key:j,style:{background:C.surf2,color:C.teal,padding:"9px 9px",textAlign:j===5?"right":"left",borderBottom:"1px solid "+C.border,position:"sticky",top:0,fontSize:11,fontWeight:700}},hh)))),
         e("tbody",null,docsDB.slice(0,1000).map((d,j)=>e("tr",{key:j,className:"rn"},
           e("td",{style:tdP(C.muted)},d.tipo),
@@ -1884,8 +1885,7 @@ function App(){
   // interfieren con la info: el logo solo se ve en las zonas oscuras vacías.
   const watermark=e("div",{style:{position:"fixed",left:0,right:0,bottom:0,height:"55vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",paddingBottom:48,pointerEvents:"none",zIndex:0,overflow:"hidden"}},
     e("div",{style:{opacity:0.05,display:"flex",flexDirection:"column",alignItems:"center",gap:10}},
-      g66Watermark(300,C.white),
-      e("div",{style:{fontWeight:800,fontSize:74,letterSpacing:3,color:C.white,lineHeight:1}},"Global66")));
+      e("div",{style:{fontWeight:800,fontSize:90,letterSpacing:3,color:C.white,lineHeight:1}},"Global66")));
 
   // Pestañas en la zona oscura (EECC / Proveedores / Documentos)
   const tabsRow=e("div",{style:{display:"flex",justifyContent:"center",gap:8,marginBottom:18,flexWrap:"wrap"}},
@@ -1901,12 +1901,10 @@ function App(){
     return e("div",{style:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",background:C.bg,padding:20}},
       e("div",{style:{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",zIndex:0}},
         e("div",{style:{opacity:0.06,display:"flex",flexDirection:"column",alignItems:"center",gap:14}},
-          g66Watermark(340,C.white),
-          e("div",{style:{fontWeight:800,fontSize:80,letterSpacing:3,color:C.white,lineHeight:1}},"Global66"))),
+          e("div",{style:{fontWeight:800,fontSize:96,letterSpacing:3,color:C.white,lineHeight:1}},"Global66"))),
       e("div",{style:{position:"relative",zIndex:1,background:C.surf,border:"1px solid "+C.border,borderRadius:16,padding:"34px 30px",width:390,maxWidth:"92vw",boxShadow:"0 16px 50px rgba(0,0,0,.55)"}},
         e("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,marginBottom:20}},
-          g66Logo(60),
-          e("div",{style:{fontWeight:800,fontSize:21,color:C.text}},"Global66 · Conciliador TC"),
+          e("div",{style:{fontWeight:800,fontSize:24,color:C.text}},"Global66 · Conciliador TC"),
           e("div",{style:{fontSize:12,color:C.muted,textAlign:"center"}},"Conciliación Mensual de Tarjetas + Manager")),
         e("div",{style:{fontWeight:700,fontSize:15,marginBottom:3,color:C.text}},"Iniciar sesión"),
         e("div",{style:{fontSize:12,color:C.muted,marginBottom:16}},"Ingresa con tu cuenta autorizada."),
