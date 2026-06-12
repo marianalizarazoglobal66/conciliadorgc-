@@ -1166,32 +1166,34 @@ function assignDocs(txs,provs,docsDB){
       }
     }
 
-    // 2b) 1→1 individual — cada movimiento con su documento del mismo mes más cercano si la
-    // diferencia es moderada (≤12%). Va ANTES del fraccionado para que un movimiento chico que
-    // calza con su propio documento no sea absorbido por el documento grande (ej. Atlassian).
-    const MOD_BAND=0.12;
-    for(const i of idxs){
-      if(!tUnused(i))continue; const amt=txs[i].debito||0; if(!(amt>0))continue; const td=parseDate(txs[i].fecha);
-      const cands=allDocs.filter(dUnused).filter(d=>sameMonth(parseDate(d.fecha),td)||isNaN(td));
-      if(!cands.length)continue;
-      cands.sort((a,b)=>Math.abs(a.total-amt)-Math.abs(b.total-amt));
-      const doc=cands[0];
-      if(doc.total>0&&Math.abs(doc.total-amt)/doc.total<=MOD_BAND){
-        result[i]={...doc,_diffAmt:amt-doc.total,_obs:""};usedDoc.add(dk(doc));
-      }
-    }
-
-    // 3) FRACCIONADO — varias TX → 1 doc (doc grande primero; el dominante absorbe todas las líneas)
-    for(const doc of allDocs.filter(dUnused).slice().sort((a,b)=>b.total-a.total)){
-      if(!dUnused(doc))continue; const dd=parseDate(doc.fecha);
-      const pool=idxs.filter(tUnused).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd));
-      if(pool.length<2)continue;
-      const remTotal=allDocs.filter(dUnused).reduce((s,d)=>s+d.total,0);
-      const dominante=doc.total>=0.6*remTotal;                       // único documento relevante del proveedor
-      const sumAll=pool.reduce((s,i)=>s+(txs[i].debito||0),0);
-      if(dominante&&doc.total>0&&Math.abs(sumAll-doc.total)/doc.total<=FRAC_BAND){assignFrac(pool,doc);continue;}
-      const best=bestSubset(pool.map(i=>({amt:txs[i].debito||0,ref:i})),doc.total,2,12,FRAC_BAND);
+    // 3) ASIGNACIÓN POR DOCUMENTO (mismo mes). Maneja a la vez:
+    //   • 1→1 múltiple (Atlassian): cada línea con SU documento
+    //   • N→1 fraccionado con documento dominante (Anthropic): el grande absorbe el resto
+    //   • N→1 cuando una factura cubre 2 líneas (TikTok): la factura toma el mejor subconjunto
+    // Estrategia: los documentos NO dominantes toman primero su mejor subconjunto de líneas
+    // (incluido tamaño 1, eligiendo la combinación cuya suma quede MÁS cerca); luego el
+    // documento dominante (≥60% del total de docs del proveedor en el mes) absorbe lo que reste.
+    const monthDocs=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);const any=idxs.some(i=>sameMonth(parseDate(txs[i].fecha),dd));return any||isNaN(dd);});
+    const totDocs=monthDocs.reduce((s,d)=>s+d.total,0);
+    const domDoc=monthDocs.slice().sort((a,b)=>b.total-a.total)[0];
+    const isDom=domDoc&&totDocs>0&&domDoc.total>=0.6*totDocs;
+    const poolLines=doc=>{const dd=parseDate(doc.fecha);return idxs.filter(tUnused).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd)).map(i=>({amt:txs[i].debito||0,ref:i}));};
+    // 3a) documentos no dominantes (de menor a mayor), mejor subconjunto (minK=1)
+    for(const doc of monthDocs.slice().sort((a,b)=>a.total-b.total)){
+      if(!dUnused(doc))continue;
+      if(isDom&&doc===domDoc)continue;
+      const best=bestSubset(poolLines(doc),doc.total,1,12,FRAC_BAND);
       if(best)assignFrac(best.map(o=>o.ref),doc);
+    }
+    // 3b) documento dominante: absorbe TODAS las líneas restantes del mes (si la suma calza),
+    //     si no, su mejor subconjunto
+    if(isDom&&dUnused(domDoc)){
+      const pool=poolLines(domDoc);
+      if(pool.length){
+        const sumAll=pool.reduce((s,o)=>s+o.amt,0);
+        if(domDoc.total>0&&Math.abs(sumAll-domDoc.total)/domDoc.total<=FRAC_BAND)assignFrac(pool.map(o=>o.ref),domDoc);
+        else{const best=bestSubset(pool,domDoc.total,1,12,FRAC_BAND);if(best)assignFrac(best.map(o=>o.ref),domDoc);}
+      }
     }
 
     // 4) 1→1 — el resto de líneas se asocian al documento del proveedor del MISMO MES más
@@ -1215,8 +1217,14 @@ function assignDocs(txs,provs,docsDB){
   // Busca un documento NO usado cuyo VALOR coincida (mismo mes / ±10 días) y toma el proveedor
   // desde ese documento (reemplaza el nombre mostrado).
   const AMT_BAND=0.01; // coincidencia de valor: exacto (±1% o $100)
+  // un proveedor "tiene documentos" si existe algún doc con su RUT (cualquier mes)
+  const provTieneDoc=p=>p&&p.rut&&docsDB.some(d=>normRut(d.rut)===normRut(p.rut));
   txs.forEach((tx,i)=>{
     if(result[i]||excluded[i]||!(tx.debito>0))return;   // solo egresos SIN documento
+    // Respetar el proveedor por nombre/keyword: si identificó un proveedor que SÍ tiene
+    // documentos, NO se reasigna por monto (ej. Amazon). El match por monto solo actúa si no
+    // hay proveedor, o si el proveedor identificado no tiene ningún documento (keyword erróneo).
+    if(provOf[i]&&provTieneDoc(provOf[i]))return;
     const amt=tx.debito; const td=parseDate(tx.fecha);
     let best=null,bestDiff=Infinity;
     for(const doc of docsDB){
