@@ -1423,6 +1423,74 @@ function exportProvXLSX(provs){
   }
 }
 
+// ══ BASE CARGA MASIVA (2 hojas) ═══════════════════════════════════════════════
+function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre){
+  const dk=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
+  // 1) Documentos únicos asociados (cada documento una vez)
+  const seen=new Set(); const docsRows=[];
+  txs.forEach((r,i)=>{
+    if(isExcluded(r))return; const d=assignments[i]; if(!d||d._reversado)return;
+    const p=provMatches[i];
+    const list=(d._multi&&d._docs&&d._docs.length)?d._docs:[d];  // multi → cada doc; resto → el doc
+    for(const doc of list){
+      const k=dk(doc); if(seen.has(k))continue; seen.add(k);
+      docsRows.push({rut:doc.rut||"",prov:(p&&p.nombre)?p.nombre:(doc.razon||""),codigo:doc.codigo||"",
+        centro:doc.centroCosto||"",tipo:doc.tipo||"",ndoc:doc.ndoc||"",fecha:doc.fecha||"",total:doc.total||0});
+    }
+  });
+  // 2) Suma de la columna Diferencia (misma que el Excel de movimientos)
+  let totalDiff=0;
+  txs.forEach((r,i)=>{const d=assignments[i];if(d&&!d._reversado&&!(d._frac&&!d._fracMain)&&d._diffAmt!=null)totalDiff+=d._diffAmt;});
+  // 3) Proveedores asociados por NOMBRE sin documento (solo nombre y rut, únicos)
+  const docRuts=new Set(docsRows.map(x=>normRut(x.rut)));
+  const sinDoc=new Map();
+  txs.forEach((r,i)=>{
+    if(isExcluded(r))return; const d=assignments[i]; const p=provMatches[i];
+    if(p&&!d&&p.rut&&!docRuts.has(normRut(p.rut))&&!sinDoc.has(normRut(p.rut)))sinDoc.set(normRut(p.rut),{nombre:p.nombre,rut:p.rut});
+  });
+
+  // ── HOJA 1 ──
+  const h1=[["RUT","Proveedor","Cod Serv","Centro Costo","Tipo Doc","N° Doc","Fecha Doc","Total Doc"]];
+  docsRows.forEach(x=>h1.push([x.rut,x.prov,x.codigo,x.centro,x.tipo,x.ndoc,x.fecha,x.total]));
+  h1.push(["","Diferencia Tipo de Cambio","","","","","",totalDiff]);
+  [...sinDoc.values()].forEach(x=>h1.push([x.rut,x.nombre,"","","","","",""]));
+
+  // ── HOJA 2 — CARGA MASIVA (layout exacto del formato: 22 columnas; solo se llenan las obligatorias) ──
+  const glosa="MLH ESTADO DE CUENTA "+(periodo||"");
+  const cuenta=t=>{const u=String(t||"").toUpperCase();return(u==="FACE"||u==="COMEX")?"210401":(u==="INTST"?"210404":"");};
+  const COLS=["Tipo de comprobante","Esquema","Glosa comprobante","Fecha contable","Total debe","Total haber","Ítem detalle comprobante","Código unidad de negocio","Glosa detalle","RUT cliente","RUT personal","Código cuenta contable","Código centro costos","Monto debe","Monto haber","Tipo de documento","Fecha de documento","Número de documento","Concepto 1","Concepto 2","Concepto 3","Concepto 4"];
+  const h2=[COLS];
+  docsRows.forEach((x,n)=>h2.push([
+    "T",        // Tipo de comprobante
+    "",         // Esquema
+    glosa,      // Glosa comprobante
+    cierre||"", // Fecha contable
+    "",         // Total debe
+    "",         // Total haber
+    n+1,        // Ítem detalle comprobante
+    "1",        // Código unidad de negocio
+    "",         // Glosa detalle
+    x.rut,      // RUT cliente
+    "",         // RUT personal
+    cuenta(x.tipo), // Código cuenta contable
+    "",         // Código centro costos (no obligatorio)
+    x.total,    // Monto debe
+    "",         // Monto haber
+    x.tipo,     // Tipo de documento
+    x.fecha,    // Fecha de documento
+    x.ndoc,     // Número de documento
+    "","","",""  // Concepto 1-4
+  ]));
+
+  const wb=XLSX.utils.book_new();
+  const ws1=XLSX.utils.aoa_to_sheet(h1); ws1['!cols']=[{wch:12},{wch:42},{wch:12},{wch:22},{wch:10},{wch:14},{wch:12},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws1,"Documentos");
+  const ws2=XLSX.utils.aoa_to_sheet(h2);
+  XLSX.utils.book_append_sheet(wb,ws2,"Carga Masiva");
+  const today=fmtDate(new Date()).replace(/\//g,"-");
+  XLSX.writeFile(wb,`BASE_CARGA_MASIVA_${today}.xlsx`);
+}
+
 // ══ COMPONENTES UI REUTILIZABLES ══════════════════════════════════════════════
 const card=(label,val,color)=>e("div",{style:{background:C.surf,border:"1px solid "+C.border,borderRadius:8,padding:"14px 16px",flex:"1 1 140px",minWidth:140}},
   e("div",{style:{fontSize:24,fontWeight:700,color}},val),
@@ -1439,6 +1507,7 @@ function App(){
   const [processed,setProcessed]=useState(false);
   const [loading,setLoading]=useState(false);
   const [periodo,setPeriodo]=useState("");
+  const [cierre,setCierre]=useState("");
   const [tab,setTab]=useState("cruce");
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
@@ -1707,6 +1776,9 @@ function App(){
         e("label",{style:{fontSize:12,color:C.muted}},"Período"),
         e("input",{value:periodo,onChange:ev=>setPeriodo(ev.target.value),placeholder:"Ej: Abril 2026",
           style:{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:14}}),
+        e("label",{style:{fontSize:12,color:C.muted}},"Fecha de cierre"),
+        e("input",{value:cierre,onChange:ev=>setCierre(ev.target.value),placeholder:"Ej: 31/05/2026",
+          style:{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:14}}),
         e("button",{className:"btnh",onClick:()=>ecRef.current&&ecRef.current.click(),
           style:{background:C.accent,color:C.white,border:"none",borderRadius:8,padding:"10px",fontWeight:600,fontSize:14}},
           loading?"⏳ Procesando…":"⚡ Cargar Excel"))),
@@ -1792,6 +1864,8 @@ function App(){
     processed&&txs.length>0&&e("div",{style:{display:"flex",gap:10,marginTop:16}},
       e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,periodo),
         style:{background:C.green,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Exportar Excel"),
+      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,periodo,cierre),
+        style:{background:C.purple,color:C.white,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Base Carga Masiva"),
       e("button",{className:"btnh",onClick:()=>ecRef.current&&ecRef.current.click(),
         style:{background:C.surf2,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:14}},"⚡ Cargar otro Excel")));
 
