@@ -966,11 +966,14 @@ const isExcluded=tx=>{
 };
 
 // ══ MATCH PROVEEDOR (RUT exacto > Fuzzy nombre > Keywords) ════════════════════
+// Normaliza a palabras: minúsculas, cualquier símbolo/espacio (*, /, -, etc.) → separador.
+// Así "Google*whatsapp busin" (keyword) calza con "Google *whatsapp busin" (movimiento).
+const kwNorm=s=>String(s||"").toLowerCase().replace(/[^0-9a-záéíóúñü]+/g," ").replace(/\s+/g," ").trim();
 const kwMatches=(field,kw)=>{
-  const f=String(field||"").toLowerCase(),k=String(kw||"").toLowerCase().trim();
-  if(!k)return false;
-  const parts=k.split(/\s+/);
-  return parts.length>1?parts.every(p=>f.includes(p)):f.includes(k);
+  const fw=new Set(kwNorm(field).split(" ").filter(Boolean));
+  const parts=kwNorm(kw).split(" ").filter(Boolean);
+  if(!parts.length||!fw.size)return false;
+  return parts.every(p=>fw.has(p));   // cada palabra del keyword debe ser una palabra del movimiento
 };
 const matchProv=(desc,tercero,provs)=>{
   if(!desc&&!tercero)return null;
@@ -1079,6 +1082,8 @@ function assignDocs(txs,provs,docsDB){
   const dk=d=>d.tipo+"|"+d.ndoc+"|"+d.rut;
   const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
   const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
+  const NEAR=20;                                  // ventana de fecha doc↔movimiento (días)
+  const within=(a,b,days)=>isNaN(a)||isNaN(b)||Math.abs((a-b)/864e5)<=days;  // tolera fechas inválidas
 
   // ── REVERSADOS — compra que coincide EXACTO con el valor de una reversa del mismo mes ──
   // Ambas líneas se marcan "Reversado", quedan en rojo y la compra no se cruza con documento.
@@ -1130,7 +1135,8 @@ function assignDocs(txs,provs,docsDB){
       ndoc:docs.map(d=>d.ndoc).join(" / "),
       codigo:[...new Set(docs.map(d=>d.codigo).filter(Boolean))].join(", "),
       centroCosto:[...new Set(docs.flatMap(d=>String(d.centroCosto||"").split(",").map(s=>s.trim()).filter(Boolean)))].join(", "),
-      total:totalSum,_multi:docs.length>1,_diffAmt:(txs[i].debito||0)-totalSum,_obs:""};
+      total:totalSum,_multi:docs.length>1,_docs:docs.slice(),  // documentos individuales (para mostrar en líneas separadas)
+      _diffAmt:(txs[i].debito||0)-totalSum,_obs:""};
   };
 
   for(const [,idxs] of byProv){
@@ -1142,10 +1148,10 @@ function assignDocs(txs,provs,docsDB){
     const dUnused=d=>!usedDoc.has(dk(d));
     const tUnused=i=>!result[i];
 
-    // 1) 1→1 casi exacto (mismo mes)
+    // 1) 1→1 casi exacto (dentro de ±NEAR días)
     for(const i of idxs){
       if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
-      const m=allDocs.filter(dUnused).filter(d=>sameMonth(parseDate(d.fecha),td)).find(d=>Math.abs(d.total-amt)<Math.max(100,amt*EXACT_BAND));
+      const m=allDocs.filter(dUnused).filter(d=>within(parseDate(d.fecha),td,NEAR)).find(d=>Math.abs(d.total-amt)<Math.max(100,amt*EXACT_BAND));
       if(m){result[i]={...m,_diffAmt:amt-m.total,_obs:""};usedDoc.add(dk(m));}
     }
 
@@ -1173,11 +1179,11 @@ function assignDocs(txs,provs,docsDB){
     // Estrategia: los documentos NO dominantes toman primero su mejor subconjunto de líneas
     // (incluido tamaño 1, eligiendo la combinación cuya suma quede MÁS cerca); luego el
     // documento dominante (≥60% del total de docs del proveedor en el mes) absorbe lo que reste.
-    const monthDocs=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);const any=idxs.some(i=>sameMonth(parseDate(txs[i].fecha),dd));return any||isNaN(dd);});
+    const monthDocs=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);return idxs.some(i=>within(parseDate(txs[i].fecha),dd,NEAR));});
     const totDocs=monthDocs.reduce((s,d)=>s+d.total,0);
     const domDoc=monthDocs.slice().sort((a,b)=>b.total-a.total)[0];
     const isDom=domDoc&&totDocs>0&&domDoc.total>=0.6*totDocs;
-    const poolLines=doc=>{const dd=parseDate(doc.fecha);return idxs.filter(tUnused).filter(i=>sameMonth(parseDate(txs[i].fecha),dd)||isNaN(dd)).map(i=>({amt:txs[i].debito||0,ref:i}));};
+    const poolLines=doc=>{const dd=parseDate(doc.fecha);return idxs.filter(tUnused).filter(i=>within(parseDate(txs[i].fecha),dd,NEAR)).map(i=>({amt:txs[i].debito||0,ref:i}));};
     // 3a) documentos no dominantes (de menor a mayor), mejor subconjunto (minK=1)
     for(const doc of monthDocs.slice().sort((a,b)=>a.total-b.total)){
       if(!dUnused(doc))continue;
@@ -1196,13 +1202,23 @@ function assignDocs(txs,provs,docsDB){
       }
     }
 
-    // 4) 1→1 — el resto de líneas se asocian al documento del proveedor del MISMO MES más
-    // cercano por monto, SIN límite de diferencia (se muestra la diferencia, aunque sea grande).
-    // Así se traen documentos con gran diferencia de pago (ej. Marbella) y los de fechas algo
-    // separadas dentro del mes (ej. Twilio).
+    // 4.0) DESFASE DE PAGO (~30 días, ej. Entel): si quedó sin documento, intenta con la SUMA de
+    // ≥2 facturas del MES ANTERIOR (21–50 días antes) que coincida con el pago (±5%). Exige ≥2
+    // documentos para no reintroducir el caso de un único documento lejano (ej. HSP 26 días).
+    for(const i of idxs){
+      if(!tUnused(i))continue; const amt=txs[i].debito||0; if(!(amt>0))continue; const td=parseDate(txs[i].fecha);
+      const prev=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);if(isNaN(dd)||isNaN(td))return false;const dias=(td-dd)/864e5;return dias>NEAR&&dias<=50;});
+      if(prev.length<2)continue;
+      const sub=subsetSum(prev.map(d=>({amt:d.total,ref:d})),amt,2,8,SUM_BAND);
+      if(sub)assignMulti(i,sub.map(o=>o.ref));
+    }
+
+    // 4) 1→1 — el resto de líneas se asocian al documento del proveedor dentro de ±NEAR días,
+    // SIN límite de diferencia (se muestra la diferencia, aunque sea grande). Trae documentos
+    // con gran diferencia de pago (ej. Marbella) pero NO documentos lejanos en fecha (ej. HSP 26 días).
     for(const i of idxs){
       if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
-      const cands=allDocs.filter(dUnused).filter(d=>sameMonth(parseDate(d.fecha),td)||isNaN(td));
+      const cands=allDocs.filter(dUnused).filter(d=>within(parseDate(d.fecha),td,NEAR));
       if(!cands.length)continue;
       cands.sort((a,b)=>Math.abs(a.total-amt)-Math.abs(b.total-amt));
       const doc=cands[0];
@@ -1230,8 +1246,7 @@ function assignDocs(txs,provs,docsDB){
     for(const doc of docsDB){
       if(!(doc.total>0)||usedDoc.has(dk(doc)))continue;
       const dd=parseDate(doc.fecha);
-      const enVentana=sameMonth(dd,td)||isNaN(dd)||isNaN(td)||Math.abs((td-dd)/864e5)<=10;
-      if(!enVentana)continue;
+      if(!within(dd,td,NEAR))continue;
       const diff=Math.abs(doc.total-amt);
       if(diff<=Math.max(100,amt*AMT_BAND)&&diff<bestDiff){bestDiff=diff;best=doc;}
     }
@@ -1367,12 +1382,21 @@ function exportXLSX(txs,assignments,provMatches,periodo){
     if(dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null)diff=fmtCLP(dd._diffAmt);
     const obs=rev?"REVERSADO":(excl?"EXCLUIDA":(dd?dd._obs:""));
     const td=(v,al)=>`<td style="padding:4px;text-align:${al||'left'}">${esc(v)}</td>`;
+    const provTxt=rev?"REVERSADO":(excl?"EXCLUIDA":((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))));
+    const rutTxt=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
+    const docs=(dd&&dd._multi&&dd._docs&&dd._docs.length>1)?dd._docs:null;
+    const d0=docs?docs[0]:dd;
     h+=`<tr style="background:${bg}">`+
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
-      td(rev?"REVERSADO":(excl?"EXCLUIDA":((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match")))))+td(rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))))+
-      td(mgr,'center')+td(dd?dd.codigo:"")+td(dd?dd.centroCosto:"")+td(dd?dd.ndoc:"")+td(dd&&dd.total?"$"+fmtCLP(dd.total):"",'right')+
+      td(provTxt)+td(rutTxt)+
+      td(mgr,'center')+td(d0?d0.codigo:"")+td(d0?d0.centroCosto:"")+td(d0?d0.ndoc:"")+td(d0&&d0.total?"$"+fmtCLP(d0.total):"",'right')+
       td(diff?"$"+diff:"",'right')+td(obs)+'</tr>';
+    if(docs)for(const dx of docs.slice(1)){
+      h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
+        td(p?p.nombre:(dd.razon||""))+td(rutTxt)+td("MULTI",'center')+
+        td(dx.codigo||"")+td(dx.centroCosto||"")+td(dx.ndoc||"")+td(dx.total?"$"+fmtCLP(dx.total):"",'right')+td("")+td("")+'</tr>';
+    }
   });
   h+='</table>';
   downloadXls(h,`Movimientos_Tarjeta_${(periodo||"periodo").replace(/[^\w]+/g,"_")}.xls`);
@@ -1711,7 +1735,7 @@ function App(){
           ["Fecha","Tipo Transacción","Nombre Tercero / Comercio","Tar.","Débito","Abono","Proveedor Plataformas","RUT","Manager","Código","Centro Costo","N° Doc","Total Doc","Diferencia","Observaciones"].map((hh,j)=>
             e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===12||j===13?"right":"left",
               borderBottom:"1px solid "+C.border,fontSize:11,fontWeight:700,position:"sticky",top:0}},hh)))),
-        e("tbody",null,txPage.map(r=>{
+        e("tbody",null,txPage.flatMap(r=>{
           const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
           const rev=d&&d._reversado;                 // compra/reversa pareada
           const dd=d&&!d._reversado?d:null;          // documento real (no reversado)
@@ -1719,7 +1743,12 @@ function App(){
           const showDiff=dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null;
           const mgr=(excl||rev)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
-          return e("tr",{key:i,className:rowClass},
+          const provName=p?p.nombre:(dd&&dd.razon?dd.razon:"");
+          const rutVal=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
+          // documentos múltiples → primera línea con el 1er documento; el resto en líneas extra
+          const docs=(dd&&dd._multi&&dd._docs&&dd._docs.length>1)?dd._docs:null;
+          const d0=docs?docs[0]:dd;
+          const mainRow=e("tr",{key:i,className:rowClass},
             td(fmtDate(r.fecha),"left",C.muted),
             e("td",{title:r.tipo,style:{padding:"7px 8px",maxWidth:170,overflow:"hidden",textOverflow:"ellipsis",borderBottom:"1px solid "+C.border}},r.tipo),
             td(r.tercero,"left",C.acL),
@@ -1727,14 +1756,27 @@ function App(){
             td(r.debito?fmtCLP(r.debito):"","right",C.red),
             td(r.abono?fmtCLP(r.abono):"","right",C.green),
             td(rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):(dd&&dd._byAmount)?badge((dd.razon||"?")+" · por monto","rgba(163,113,247,.18)",C.purple):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
-            td(rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))),"left",C.muted),
+            td(rutVal,"left",C.muted),
             td(mgr||"—","center",dd?null:C.muted),
-            td(dd?dd.codigo:"","left",C.muted),
-            td(dd?dd.centroCosto:"","left",C.muted),
-            td(dd?dd.ndoc:"","left",C.teal),
-            td(dd&&dd.total?fmtCLP(dd.total):"","right",C.teal),
+            td(d0?d0.codigo:"","left",C.muted),
+            td(d0?d0.centroCosto:"","left",C.muted),
+            td(d0?d0.ndoc:"","left",C.teal),
+            td(d0&&d0.total?fmtCLP(d0.total):"","right",C.teal),
             td(showDiff?fmtCLP(dd._diffAmt):"","right",showDiff?diffColor(dd._diffAmt,r.debito):C.muted),
             td(rev?"Reversado":(excl?"⛔ Excluida":(dd&&dd._obs?dd._obs:"")),"left",(rev||excl)?C.red:C.yellow));
+          if(!docs)return [mainRow];
+          const extra=docs.slice(1).map((dx,k)=>e("tr",{key:i+"_"+k,className:rowClass},
+            td("","left"),e("td",{style:{padding:"7px 8px",borderBottom:"1px solid "+C.border}},""),td("","left"),td("","center"),
+            td("","right"),td("","right"),
+            td(provName?badge(provName,"rgba(56,139,253,.16)",C.acL):"","left"),
+            td(rutVal,"left",C.muted),
+            td(badge("📦 Multi",C.accent),"center"),
+            td(dx.codigo||"","left",C.muted),
+            td(dx.centroCosto||"","left",C.muted),
+            td(dx.ndoc||"","left",C.teal),
+            td(dx.total?fmtCLP(dx.total):"","right",C.teal),
+            td("","right"),td("","left")));
+          return [mainRow,...extra];
         })))),
     // paginación
     processed&&txView.length>0&&e("div",{style:{display:"flex",alignItems:"center",gap:8,marginTop:12,flexWrap:"wrap"}},
