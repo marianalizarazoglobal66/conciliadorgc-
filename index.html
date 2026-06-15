@@ -1283,7 +1283,18 @@ function parseEC(data){
   const hi=detectHeader(data);if(hi<0)return[];
   const headers=(data[hi]||[]).map(c=>String(c||"").trim().toLowerCase());
   const col=colFinder(headers);
-  const ci={
+  // Detecta el formato CARDDA por sus columnas "Egresos"/"Ingresos" (CLP) + "Proveedor".
+  const esCardda=headers.some(h=>h.includes("egresos"))&&headers.some(h=>h.includes("ingresos"));
+  const ci=esCardda?{
+    fecha:col("fecha"),
+    tipo:col("descripción","descripcion"),                 // descripción completa (para keywords)
+    tercero:col("proveedor"),                              // nombre limpio del comercio
+    tarjeta:headers.indexOf("tarjeta")>=0?headers.indexOf("tarjeta"):col("tarjeta"),
+    debito:col("egresos"),                                 // cargo en CLP (negativo)
+    abono:col("ingresos"),                                 // abonos en CLP
+    id:col("id"),
+    comentario:col("comentario"),
+  }:{
     fecha:col("fecha de la transac","fecha"),
     tipo:col("tipo de transac","tipo","descripcion","glosa","detalle","concepto"),
     tercero:col("nombre tercero","tercero","comercio","beneficiario","nombre"),
@@ -1297,10 +1308,11 @@ function parseEC(data){
   for(let i=hi+1;i<data.length;i++){
     const row=data[i]||[];
     const g=idx=>idx>=0?String(row[idx]==null?"":row[idx]).trim():"";
-    const tipo=g(ci.tipo),fecha=g(ci.fecha),tercero=g(ci.tercero);
+    let tipo=g(ci.tipo),fecha=g(ci.fecha),tercero=g(ci.tercero);
+    if(esCardda&&!tercero)tercero=tipo;                    // si no hay Proveedor, usar la descripción
     if(!tipo&&!fecha&&!tercero)continue;
     rows.push({fecha,tipo,tercero,tarjeta:g(ci.tarjeta),
-      debito:numCLP(g(ci.debito)),abono:numCLP(g(ci.abono)),idTx:g(ci.id),comentario:g(ci.comentario)});
+      debito:Math.abs(numCLP(g(ci.debito))),abono:Math.abs(numCLP(g(ci.abono))),idTx:g(ci.id),comentario:g(ci.comentario)});
   }
   return rows;
 }
