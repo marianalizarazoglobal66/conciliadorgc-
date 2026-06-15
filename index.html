@@ -966,6 +966,11 @@ const isExcluded=tx=>{
   const t=[tx.tipo||"",tx.tercero||"",tx.comentario||""].join(" ").toLowerCase();
   return EXCLUSION_TERMS.some(x=>t.includes(x));
 };
+// Línea de "costo tipo de cambio": sin proveedor, pero su monto va a la columna Diferencia.
+const isCostoTC=tx=>{
+  const t=[tx.tipo||"",tx.tercero||"",tx.comentario||""].join(" ").toLowerCase();
+  return t.includes("costo")&&t.includes("tipo")&&t.includes("cambio");
+};
 
 // ══ MATCH PROVEEDOR (RUT exacto > Fuzzy nombre > Keywords) ════════════════════
 // Normaliza a palabras: minúsculas, cualquier símbolo/espacio (*, /, -, etc.) → separador.
@@ -1086,6 +1091,12 @@ function assignDocs(txs,provs,docsDB){
   const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
   const NEAR=20;                                  // ventana de fecha doc↔movimiento (días)
   const within=(a,b,days)=>isNaN(a)||isNaN(b)||Math.abs((a-b)/864e5)<=days;  // tolera fechas inválidas
+
+  // ── COSTO TIPO DE CAMBIO — sin proveedor; su monto va a la columna Diferencia ──
+  txs.forEach((tx,i)=>{
+    if(excluded[i]||result[i]||!(tx.debito>0))return;
+    if(isCostoTC(tx))result[i]={_costoTC:true,_diffAmt:tx.debito||0,_obs:"Costo tipo de cambio"};
+  });
 
   // ── REVERSADOS — compra que coincide EXACTO con el valor de una reversa del mismo mes ──
   // Ambas líneas se marcan "Reversado", quedan en rojo y la compra no se cruza con documento.
@@ -1377,9 +1388,10 @@ function exportXLSX(txs,assignments,provMatches,periodo){
     const d=assignments[i];
     const rev=d&&d._reversado;
     const dd=d&&!d._reversado?d:null;
+    const ctc=dd&&dd._costoTC;
     let bg="#FFFFFF";
-    if(excl||rev)bg="#FBE9E7";else if(dd&&dd._frac)bg="#FFF4D6";else if(dd&&dd._multi)bg="#E3F0FF";else if(dd)bg="#EAF7EC";
-    const mgr=(excl||rev)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
+    if(excl||rev)bg="#FBE9E7";else if(ctc)bg="#FFFFFF";else if(dd&&dd._frac)bg="#FFF4D6";else if(dd&&dd._multi)bg="#E3F0FF";else if(dd)bg="#EAF7EC";
+    const mgr=(excl||rev||ctc)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
     let diff="";
     if(dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null)diff=fmtCLP(dd._diffAmt);
     const obs=rev?"REVERSADO":(excl?"EXCLUIDA":(dd?dd._obs:""));
@@ -1431,7 +1443,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre){
   // 1) Documentos únicos asociados (cada documento una vez)
   const seen=new Set(); const docsRows=[];
   txs.forEach((r,i)=>{
-    if(isExcluded(r))return; const d=assignments[i]; if(!d||d._reversado)return;
+    if(isExcluded(r))return; const d=assignments[i]; if(!d||d._reversado||d._costoTC)return;
     const p=provMatches[i];
     const list=(d._multi&&d._docs&&d._docs.length)?d._docs:[d];  // multi → cada doc; resto → el doc
     for(const doc of list){
@@ -1555,7 +1567,7 @@ function App(){
   // ── useMemo: estadísticas ─────────────────────────────────────────────────
   const {matchCount,docCount,exclCount}=useMemo(()=>({
     matchCount:txs.reduce((n,_,i)=>{const a=assignments[i];if(a&&a._reversado)return n;return n+((txProvMatches[i]||(a&&a._byAmount))?1:0);},0),
-    docCount:assignments.filter(a=>a&&!a._reversado).length,
+    docCount:assignments.filter(a=>a&&!a._reversado&&!a._costoTC).length,
     exclCount:txs.filter(isExcluded).length,
   }),[txProvMatches,assignments,txs]);
   const pctId=useMemo(()=>{const den=txs.length-exclCount;return den>0?Math.round(matchCount/den*100):0;},[matchCount,exclCount,txs]);
@@ -1821,9 +1833,10 @@ function App(){
           const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
           const rev=d&&d._reversado;                 // compra/reversa pareada
           const dd=d&&!d._reversado?d:null;          // documento real (no reversado)
-          const rowClass=(excl||rev)?"rexcl":dd&&dd._frac?"rfrac":dd&&dd._multi?"rmulti":dd?"rm":"rn";
+          const ctc=dd&&dd._costoTC;                 // costo tipo de cambio (sin proveedor, va a Diferencia)
+          const rowClass=(excl||rev)?"rexcl":ctc?"rn":dd&&dd._frac?"rfrac":dd&&dd._multi?"rmulti":dd?"rm":"rn";
           const showDiff=dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null;
-          const mgr=(excl||rev)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
+          const mgr=(excl||rev||ctc)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
           const provName=p?p.nombre:(dd&&dd.razon?dd.razon:"");
           const rutVal=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
@@ -1845,7 +1858,7 @@ function App(){
             td(d0?d0.ndoc:"","left",C.teal),
             td(d0?fmtDate(d0.fecha):"","left",C.muted),
             td(d0&&d0.total?fmtCLP(d0.total):"","right",C.teal),
-            td(showDiff?fmtCLP(dd._diffAmt):"","right",showDiff?diffColor(dd._diffAmt,r.debito):C.muted),
+            td(showDiff?fmtCLP(dd._diffAmt):"","right",showDiff?(ctc?C.text:diffColor(dd._diffAmt,r.debito)):C.muted),
             td(rev?"Reversado":(excl?"⛔ Excluida":(dd&&dd._obs?dd._obs:"")),"left",(rev||excl)?C.red:C.yellow));
           if(!docs)return [mainRow];
           const extra=docs.slice(1).map((dx,k)=>e("tr",{key:i+"_"+k,className:rowClass},
