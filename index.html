@@ -1484,15 +1484,22 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre){
     "","","",""  // Concepto 1-4
   ]));
 
-  // título con fondo azul Global66, letras blancas en negrita
-  const HS={fill:{patternType:"solid",fgColor:{rgb:"2536E8"}},font:{bold:true,color:{rgb:"FFFFFF"}},alignment:{vertical:"center"}};
-  const styleHeader=(ws,ncols)=>{for(let c=0;c<ncols;c++){const ad=XLSX.utils.encode_cell({r:0,c});if(ws[ad])ws[ad].s=HS;}};
+  // Datos en MAYÚSCULAS (solo los valores; el encabezado se mantiene tal cual el formato)
+  const up=v=>typeof v==="string"?v.toUpperCase():v;
+  const upData=aoa=>aoa.map((row,ri)=>ri===0?row.slice():row.map(up));
+  // Fuente Calibri 11 en todas las celdas; encabezado fondo azul + blanco negrita
+  const FONT={name:"Calibri",sz:11};
+  const HFONT={name:"Calibri",sz:11,bold:true,color:{rgb:"FFFFFF"}};
+  const FILL={patternType:"solid",fgColor:{rgb:"2536E8"}};
+  const styleSheet=ws=>{const ref=ws['!ref'];if(!ref)return;const rg=XLSX.utils.decode_range(ref);
+    for(let r=rg.s.r;r<=rg.e.r;r++)for(let c=rg.s.c;c<=rg.e.c;c++){const ad=XLSX.utils.encode_cell({r,c});const cell=ws[ad];if(!cell)continue;
+      cell.s=r===0?{fill:FILL,font:HFONT,alignment:{vertical:"center"}}:{font:FONT};}};
   const wb=XLSX.utils.book_new();
-  const ws1=XLSX.utils.aoa_to_sheet(h1); ws1['!cols']=[{wch:12},{wch:42},{wch:12},{wch:22},{wch:10},{wch:14},{wch:12},{wch:14}];
-  styleHeader(ws1,h1[0].length);
+  const ws1=XLSX.utils.aoa_to_sheet(upData(h1)); ws1['!cols']=[{wch:12},{wch:42},{wch:12},{wch:22},{wch:10},{wch:14},{wch:12},{wch:14}];
+  styleSheet(ws1);
   XLSX.utils.book_append_sheet(wb,ws1,"Documentos");
-  const ws2=XLSX.utils.aoa_to_sheet(h2);
-  styleHeader(ws2,COLS.length);
+  const ws2=XLSX.utils.aoa_to_sheet(upData(h2));
+  styleSheet(ws2);
   XLSX.utils.book_append_sheet(wb,ws2,"Carga Masiva");
   const today=fmtDate(new Date()).replace(/\//g,"-");
   XLSX.writeFile(wb,`BASE_CARGA_MASIVA_${today}.xlsx`);
