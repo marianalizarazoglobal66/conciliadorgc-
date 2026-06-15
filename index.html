@@ -964,7 +964,9 @@ function autoKw(nombre){
 const EXCLUSION_TERMS=["recibido","reversa","devolución","devolucion","reembolso"];
 const isExcluded=tx=>{
   const t=[tx.tipo||"",tx.tercero||"",tx.comentario||""].join(" ").toLowerCase();
-  return EXCLUSION_TERMS.some(x=>t.includes(x));
+  if(EXCLUSION_TERMS.some(x=>t.includes(x)))return true;
+  if(t.includes("comisi")&&t.includes("cardda"))return true;   // comisión Cardda → excluida del resumen
+  return false;
 };
 // Línea de "costo tipo de cambio": sin proveedor, pero su monto va a la columna Diferencia.
 const isCostoTC=tx=>{
