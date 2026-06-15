@@ -6,7 +6,7 @@
 <title>Conciliador TC — Global66</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -936,6 +936,8 @@ function parseDate(s){
 }
 function fmtDate(s){const d=parseDate(s);if(isNaN(d))return String(s||"");
   return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear();}
+const MESES=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+function monthLabel(s){const d=parseDate(s);return isNaN(d)?String(s||""):MESES[d.getMonth()]+" "+d.getFullYear();}  // ej. 31/05/2026 → "Mayo 2026"
 
 // ══ KEYWORDS / NOMBRES ════════════════════════════════════════════════════════
 const LEGAL_SUF=['s.a.','s.p.a.','spa','s.a.s','sas','ltda','limitada','s.l.','s.r.l.',
@@ -1482,10 +1484,15 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre){
     "","","",""  // Concepto 1-4
   ]));
 
+  // título con fondo azul Global66, letras blancas en negrita
+  const HS={fill:{patternType:"solid",fgColor:{rgb:"2536E8"}},font:{bold:true,color:{rgb:"FFFFFF"}},alignment:{vertical:"center"}};
+  const styleHeader=(ws,ncols)=>{for(let c=0;c<ncols;c++){const ad=XLSX.utils.encode_cell({r:0,c});if(ws[ad])ws[ad].s=HS;}};
   const wb=XLSX.utils.book_new();
   const ws1=XLSX.utils.aoa_to_sheet(h1); ws1['!cols']=[{wch:12},{wch:42},{wch:12},{wch:22},{wch:10},{wch:14},{wch:12},{wch:14}];
+  styleHeader(ws1,h1[0].length);
   XLSX.utils.book_append_sheet(wb,ws1,"Documentos");
   const ws2=XLSX.utils.aoa_to_sheet(h2);
+  styleHeader(ws2,COLS.length);
   XLSX.utils.book_append_sheet(wb,ws2,"Carga Masiva");
   const today=fmtDate(new Date()).replace(/\//g,"-");
   XLSX.writeFile(wb,`BASE_CARGA_MASIVA_${today}.xlsx`);
@@ -1506,7 +1513,6 @@ function App(){
   const [assignments,setAssignments]=useState([]);
   const [processed,setProcessed]=useState(false);
   const [loading,setLoading]=useState(false);
-  const [periodo,setPeriodo]=useState("");
   const [cierre,setCierre]=useState("");
   const [tab,setTab]=useState("cruce");
   const [filter,setFilter]=useState("all");
@@ -1773,12 +1779,10 @@ function App(){
     e("div",{style:{display:"flex",gap:14,marginBottom:18,flexWrap:"wrap",alignItems:"stretch"}},
       e("div",{style:{flex:"2 1 360px"}},dz("dz-y",dragEC,setDragEC,loadEC,ecRef,"Cargar Estado de Cuenta","Arrastra o haz clic · .xlsx .xls .csv")),
       e("div",{style:{flex:"1 1 240px",display:"flex",flexDirection:"column",gap:10,justifyContent:"center"}},
-        e("label",{style:{fontSize:12,color:C.muted}},"Período"),
-        e("input",{value:periodo,onChange:ev=>setPeriodo(ev.target.value),placeholder:"Ej: Abril 2026",
-          style:{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:14}}),
-        e("label",{style:{fontSize:12,color:C.muted}},"Fecha de cierre"),
+        e("label",{style:{fontSize:12,color:C.muted}},"Fecha de cierre de mes"),
         e("input",{value:cierre,onChange:ev=>setCierre(ev.target.value),placeholder:"Ej: 31/05/2026",
           style:{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:14}}),
+        cierre&&e("div",{style:{fontSize:11,color:C.muted}},"Mes: "+monthLabel(cierre)),
         e("button",{className:"btnh",onClick:()=>ecRef.current&&ecRef.current.click(),
           style:{background:C.accent,color:C.white,border:"none",borderRadius:8,padding:"10px",fontWeight:600,fontSize:14}},
           loading?"⏳ Procesando…":"⚡ Cargar Excel"))),
@@ -1862,9 +1866,9 @@ function App(){
         e("button",{key:"b"+j,onClick:f,disabled:page>=totalPages,style:btnPg(page>=totalPages)},l))),
     // acciones
     processed&&txs.length>0&&e("div",{style:{display:"flex",gap:10,marginTop:16}},
-      e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,periodo),
+      e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,monthLabel(cierre)),
         style:{background:C.green,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Exportar Excel"),
-      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,periodo,cierre),
+      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,monthLabel(cierre),cierre),
         style:{background:C.purple,color:C.white,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Base Carga Masiva"),
       e("button",{className:"btnh",onClick:()=>ecRef.current&&ecRef.current.click(),
         style:{background:C.surf2,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:14}},"⚡ Cargar otro Excel")));
