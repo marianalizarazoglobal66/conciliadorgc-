@@ -1306,10 +1306,13 @@ function parseEC(data){
     id:col("id de la transac","referencia","folio","ref","id"),
     comentario:col("comentario"),
   };
+  const estadoCol=esCardda?col("estado"):-1;              // Cardda: columna Estado
   const rows=[];
   for(let i=hi+1;i<data.length;i++){
     const row=data[i]||[];
     const g=idx=>idx>=0?String(row[idx]==null?"":row[idx]).trim():"";
+    // Cardda: dejar fuera de la conciliación las líneas Pendiente / Rechazada
+    if(estadoCol>=0){const est=g(estadoCol).toLowerCase();if(est.includes("pendiente")||est.includes("rechaz"))continue;}
     let tipo=g(ci.tipo),fecha=g(ci.fecha),tercero=g(ci.tercero);
     if(esCardda&&!tercero)tercero=tipo;                    // si no hay Proveedor, usar la descripción
     if(!tipo&&!fecha&&!tercero)continue;
