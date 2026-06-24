@@ -973,6 +973,12 @@ const isCostoTC=tx=>{
   const t=[tx.tipo||"",tx.tercero||"",tx.comentario||""].join(" ").toLowerCase();
   return t.includes("costo")&&t.includes("tipo")&&t.includes("cambio");
 };
+// "Sin match" forzado: envío/transferencia a Cardda (recarga de la tarjeta) → no busca proveedor ni documento.
+const isNoMatch=tx=>{
+  const t=[tx.tipo||"",tx.tercero||""].join(" ").toLowerCase();
+  const ter=(tx.tercero||"").toLowerCase().replace(/[^a-zñ ]/g,"").trim();
+  return (t.includes("cardda")&&(t.includes("envio")||t.includes("envío")))||ter==="cardda spa";
+};
 
 // ══ MATCH PROVEEDOR (RUT exacto > Fuzzy nombre > Keywords) ════════════════════
 // Normaliza a palabras: minúsculas, cualquier símbolo/espacio (*, /, -, etc.) → separador.
@@ -1086,7 +1092,7 @@ function assignDocs(txs,provs,docsDB){
   const result=new Array(n).fill(null);
   if(!n)return result;
   const excluded=txs.map(isExcluded);
-  const provOf=txs.map((tx,i)=>excluded[i]?null:matchProv(tx.tipo,tx.tercero,provs));
+  const provOf=txs.map((tx,i)=>(excluded[i]||isNoMatch(tx))?null:matchProv(tx.tipo,tx.tercero,provs));
   const usedDoc=new Set();
   const dk=d=>d.tipo+"|"+d.ndoc+"|"+d.rut;
   // documentos ya marcados como conciliados (en otra tarjeta) → no se reutilizan
@@ -1271,7 +1277,7 @@ function assignDocs(txs,provs,docsDB){
   // un proveedor "tiene documentos" si existe algún doc con su RUT (cualquier mes)
   const provTieneDoc=p=>p&&p.rut&&docsDB.some(d=>normRut(d.rut)===normRut(p.rut));
   txs.forEach((tx,i)=>{
-    if(result[i]||excluded[i]||!(tx.debito>0))return;   // solo egresos SIN documento
+    if(result[i]||excluded[i]||isNoMatch(tx)||!(tx.debito>0))return;   // solo egresos SIN documento
     // Respetar el proveedor por nombre/keyword: si identificó un proveedor que SÍ tiene
     // documentos, NO se reasigna por monto (ej. Amazon). El match por monto solo actúa si no
     // hay proveedor, o si el proveedor identificado no tiene ningún documento (keyword erróneo).
@@ -1600,7 +1606,7 @@ function App(){
   // ── useMemo: mapa RUT→prov ────────────────────────────────────────────────
   const provMap=useMemo(()=>{const m=new Map();for(const p of provs)if(p.rut)m.set(normRut(p.rut),p);return m;},[provs]);
   // ── useMemo: match de proveedor por TX (una sola vez) ─────────────────────
-  const txProvMatches=useMemo(()=>txs.map(r=>isExcluded(r)?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs]);
+  const txProvMatches=useMemo(()=>txs.map(r=>(isExcluded(r)||isNoMatch(r))?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs]);
   // ── useMemo: estadísticas ─────────────────────────────────────────────────
   const {matchCount,docCount,exclCount}=useMemo(()=>({
     matchCount:txs.reduce((n,_,i)=>{const a=assignments[i];if(a&&a._reversado)return n;return n+((txProvMatches[i]||(a&&a._byAmount))?1:0);},0),
