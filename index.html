@@ -1165,15 +1165,19 @@ function assignDocs(txs,provs,docsDB){
     const dUnused=d=>!usedDoc.has(dk(d));
     const tUnused=i=>!result[i];
 
-    // PROVEEDORES POR FECHA EXACTA (Replit, Anthropic): cada cargo cruza con el documento
-    // del MISMO RUT y MISMA FECHA (entre los de esa fecha, el de monto más cercano).
+    // PROVEEDORES POR FECHA (Replit, Anthropic): cada cargo cruza con el documento del MISMO RUT
+    // y fecha dentro de ±1 día (tolerancia de sensibilidad). Prioriza misma fecha exacta y, dentro
+    // de la ventana, el de monto más cercano.
     if(/replit|anthropic/i.test(prov.nombre||"")){
+      const DIA=1;
+      const cerca=(dd,td)=>!isNaN(dd)&&!isNaN(td)&&Math.abs((dd-td)/864e5)<=DIA;
       for(const i of idxs){
         if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
-        const mismaFecha=allDocs.filter(dUnused).filter(d=>sameDay(parseDate(d.fecha),td));
-        if(!mismaFecha.length)continue;
-        mismaFecha.sort((a,b)=>Math.abs(a.total-amt)-Math.abs(b.total-amt));
-        const doc=mismaFecha[0];
+        const cand=allDocs.filter(dUnused).filter(d=>cerca(parseDate(d.fecha),td));
+        if(!cand.length)continue;
+        // ordena por proximidad de fecha y luego de monto
+        cand.sort((a,b)=>{const da=Math.abs((parseDate(a.fecha)-td)/864e5),db=Math.abs((parseDate(b.fecha)-td)/864e5);return da!==db?da-db:Math.abs(a.total-amt)-Math.abs(b.total-amt);});
+        const doc=cand[0];
         result[i]={...doc,_diffAmt:amt-doc.total,_obs:""};usedDoc.add(dk(doc));
       }
       continue;   // no aplicar la lógica general a estos proveedores
