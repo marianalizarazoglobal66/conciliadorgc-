@@ -1414,8 +1414,9 @@ function downloadXls(html,filename){
 }
 const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 // valor con edición manual aplicada (si existe) — key de línea + campo
-const editVal=(edits,key,field,base)=>(edits&&edits[key]&&edits[key][field]!==undefined&&edits[key][field]!=="")?edits[key][field]:base;
-const hasEdit=(edits,key,field)=>!!(edits&&edits[key]&&edits[key][field]!==undefined&&edits[key][field]!=="");
+// presencia del campo = edición (un "" explícito SÍ sobrescribe, p.ej. doc no encontrado → vacío)
+const editVal=(edits,key,field,base)=>(edits&&edits[key]&&edits[key][field]!==undefined)?edits[key][field]:base;
+const hasEdit=(edits,key,field)=>!!(edits&&edits[key]&&edits[key][field]!==undefined);
 
 function exportXLSX(txs,assignments,provMatches,periodo,edits){
   const total=txs.length;
@@ -1437,8 +1438,9 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits){
     const ctc=dd&&dd._costoTC;
     let bg="#FFFFFF";
     if(excl||rev)bg="#FBE9E7";else if(ctc)bg="#FFFFFF";else if(dd&&dd._frac)bg="#FFF4D6";else if(dd&&dd._multi)bg="#E3F0FF";else if(dd)bg="#EAF7EC";
-    const mgr=(excl||rev||ctc)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
     const ki=String(i);
+    let mgr=(excl||rev||ctc)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
+    if(!dd&&!excl&&!rev&&edits&&edits[ki]&&edits[ki]._found)mgr="SI";
     const td=(v,al)=>`<td style="padding:4px;text-align:${al||'left'}">${esc(v)}</td>`;
     const provTxt=rev?"REVERSADO":(excl?"EXCLUIDA":((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))));
     const rutTxt=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
@@ -1454,13 +1456,13 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits){
       td(fmtDate(r.fecha))+td(r.tipo)+td(r.tercero)+td(r.tarjeta,'center')+
       td(r.debito?"$"+fmtCLP(r.debito):"",'right')+td(r.abono?"$"+fmtCLP(r.abono):"",'right')+
       td(provTxt)+td(rutTxt)+
-      td(mgr,'center')+td(d0?d0.codigo:"")+td(d0?d0.centroCosto:"")+td(eN)+td(eF?fmtDate(eF):"")+td(money(eT),'right')+
+      td(mgr,'center')+td(editVal(edits,ki,"codigo",d0?d0.codigo:""))+td(editVal(edits,ki,"centroCosto",d0?d0.centroCosto:""))+td(eN)+td(eF?fmtDate(eF):"")+td(money(eT),'right')+
       td(money(eDiff),'right')+td(obs)+'</tr>';
     if(docs)for(let k=0;k<docs.length-1;k++){const dx=docs[k+1],ek=i+"_"+k;
       const xN=editVal(edits,ek,"ndoc",dx.ndoc||""),xF=editVal(edits,ek,"fecha",dx.fecha||""),xT=editVal(edits,ek,"total",dx.total||"");
       h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
         td(p?p.nombre:(dd.razon||""))+td(rutTxt)+td("MULTI",'center')+
-        td(dx.codigo||"")+td(dx.centroCosto||"")+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
+        td(editVal(edits,ek,"codigo",dx.codigo||""))+td(editVal(edits,ek,"centroCosto",dx.centroCosto||""))+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
     }
   });
   h+='</table>';
@@ -1492,23 +1494,30 @@ function exportProvXLSX(provs){
 function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits){
   const dk=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
   // 1) Documentos únicos asociados (cada documento una vez) — con ediciones manuales
+  //    Incluye líneas sin match donde se ingresó un N° Doc a mano (datos tomados del listado Manager).
   const seen=new Set(); const docsRows=[];
   txs.forEach((r,i)=>{
-    if(isExcluded(r))return; const d=assignments[i]; if(!d||d._reversado||d._costoTC)return;
+    if(isExcluded(r))return; const d=assignments[i]; if(d&&(d._reversado||d._costoTC))return;
     const p=provMatches[i];
-    const list=(d._multi&&d._docs&&d._docs.length)?d._docs:[d];  // multi → cada doc; resto → el doc
+    const list=d?((d._multi&&d._docs&&d._docs.length)?d._docs:[d]):[{}];  // sin assignment → posible entrada manual
     list.forEach((doc,li)=>{
       const lk=li===0?String(i):i+"_"+(li-1);  // misma clave de edición que la tabla EECC
-      const eN=editVal(edits,lk,"ndoc",doc.ndoc||""), eF=editVal(edits,lk,"fecha",doc.fecha||""), eT=editVal(edits,lk,"total",doc.total||0);
-      const k=(doc.tipo||"")+"|"+eN+"|"+(doc.rut||""); if(seen.has(k))return; seen.add(k);
-      docsRows.push({rut:doc.rut||"",prov:(p&&p.nombre)?p.nombre:(doc.razon||""),codigo:doc.codigo||"",
-        centro:doc.centroCosto||"",tipo:doc.tipo||"",ndoc:eN,fecha:eF,total:eT||0});
+      const ev=edits&&edits[lk];
+      const eN=editVal(edits,lk,"ndoc",doc.ndoc||""); if(!eN)return;  // sin N° Doc → no va a carga masiva
+      const eF=editVal(edits,lk,"fecha",doc.fecha||""), eT=editVal(edits,lk,"total",doc.total||0);
+      const eCod=editVal(edits,lk,"codigo",doc.codigo||""), eCen=editVal(edits,lk,"centroCosto",doc.centroCosto||"");
+      const tipo=(ev&&ev._doc)?ev._doc.tipo:(doc.tipo||"");
+      const rut=(ev&&ev._doc)?ev._doc.rut:(doc.rut||"");
+      const razon=(ev&&ev._doc)?ev._doc.razon:(doc.razon||"");
+      const k=(tipo||"")+"|"+eN+"|"+(rut||""); if(seen.has(k))return; seen.add(k);
+      docsRows.push({rut:rut||"",prov:(p&&p.nombre)?p.nombre:(razon||""),codigo:eCod,
+        centro:eCen,tipo:tipo,ndoc:eN,fecha:eF,total:eT||0});
     });
   });
   // 2) Suma de la columna Diferencia (misma que el Excel de movimientos) — con ediciones
   let totalDiff=0;
-  txs.forEach((r,i)=>{const d=assignments[i];if(!d||d._reversado)return;
-    const base=(!(d._frac&&!d._fracMain)&&d._diffAmt!=null)?d._diffAmt:"";
+  txs.forEach((r,i)=>{if(isExcluded(r))return; const d=assignments[i]; if(d&&d._reversado)return;
+    const base=(d&&!(d._frac&&!d._fracMain)&&d._diffAmt!=null)?d._diffAmt:"";
     const ev=editVal(edits,String(i),"diff",base); const n=ev===""||ev==null?0:Number(ev);
     if(!isNaN(n))totalDiff+=n;});
   // 3) Proveedores asociados por NOMBRE sin documento (solo nombre y rut, únicos)
@@ -1589,8 +1598,25 @@ function App(){
   const [processed,setProcessed]=useState(false);
   const [loading,setLoading]=useState(false);
   const [cierre,setCierre]=useState("");
-  const [edits,setEdits]=useState({});   // ediciones manuales por línea: {lineKey:{ndoc,fecha,total,diff,obs}}
+  const [edits,setEdits]=useState({});   // ediciones manuales por línea: {lineKey:{ndoc,fecha,total,diff,obs,codigo,centroCosto,_doc,_found}}
   const setEdit=(k,f,v)=>setEdits(p=>({...p,[k]:{...(p[k]||{}),[f]:v}}));
+  // al escribir un N° Doc en el EECC: trae automáticamente los datos del documento Manager; si no existe, vacía
+  const findDocByNdoc=ndoc=>{const q=String(ndoc||"").trim().toLowerCase();if(!q)return null;return docsDB.find(d=>String(d.ndoc||"").trim().toLowerCase()===q)||null;};
+  const applyNdocEdit=(key,raw,debito,recalcDiff)=>{
+    const typed=String(raw||"").trim();
+    const found=findDocByNdoc(typed);
+    setEdits(p=>{const cur={...(p[key]||{})};
+      if(found){
+        cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
+        cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");
+        cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;
+        if(recalcDiff)cur.diff=(debito||0)-(found.total||0);
+      }else{
+        cur.ndoc=typed;cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;
+        if(recalcDiff)cur.diff="";
+      }
+      return {...p,[key]:cur};});
+  };
   const [tab,setTab]=useState("cruce");
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
@@ -1740,11 +1766,16 @@ function App(){
   const dkey=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
   const markConciliados=async()=>{
     const keys=new Set();const docs=[];
-    assignments.forEach((a,i)=>{if(!a||a._reversado||a._costoTC)return;const list=(a._multi&&a._docs)?a._docs:[a];
+    txs.forEach((r,i)=>{const a=assignments[i];if(a&&(a._reversado||a._costoTC))return;
+      if(isExcluded(r))return;
+      const list=a?((a._multi&&a._docs)?a._docs:[a]):[{}];  // sin match → posible doc manual
       list.forEach((d,li)=>{const lk=li===0?String(i):i+"_"+(li-1);
+        const ev=edits&&edits[lk];
         const eN=editVal(edits,lk,"ndoc",d.ndoc||"");
-        const ed={...d,ndoc:eN};const k=dkey(ed);
-        if(eN&&!keys.has(k)){keys.add(k);docs.push(ed);}});});
+        const tipo=(ev&&ev._doc)?ev._doc.tipo:(d.tipo||"");
+        const rut=(ev&&ev._doc)?ev._doc.rut:(d.rut||"");
+        const doc={...d,tipo,rut,ndoc:eN};const k=dkey(doc);
+        if(eN&&!keys.has(k)){keys.add(k);docs.push(doc);}});});
     if(!docs.length){setEcMsg("No hay documentos asociados para marcar.");return;}
     if(!confirm(`¿Marcar ${docs.length} documento(s) como conciliados? No se volverán a usar en la otra tarjeta. (Se reinician al recargar el listado Manager.)`))return;
     try{
@@ -1921,7 +1952,9 @@ function App(){
           const ctc=dd&&dd._costoTC;                 // costo tipo de cambio (sin proveedor, va a Diferencia)
           const rowClass=(excl||rev)?"rexcl":ctc?"rn":dd&&dd._frac?"rfrac":dd&&dd._multi?"rmulti":dd?"rm":"rn";
           const showDiff=dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null;
-          const mgr=(excl||rev||ctc)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
+          let mgr=(excl||rev||ctc)?null:dd?(dd._frac?badge("🔀 Fracc.",C.yellow,C.bg):dd._multi?badge("📦 Multi",C.accent):badge("Sí",C.teal,C.bg)):null;
+          // línea sin match donde se ingresó un N° Doc manualmente y se encontró en Manager → "Sí"
+          if(!dd&&!excl&&!rev&&edits[String(i)]&&edits[String(i)]._found)mgr=badge("Sí",C.teal,C.bg);
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
           const provName=p?p.nombre:(dd&&dd.razon?dd.razon:"");
           const rutVal=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
@@ -1935,9 +1968,12 @@ function App(){
           const ed=(key,field,baseVal,al,col,type)=>{
             const cur=editVal(edits,key,field,baseVal);
             const dv=cur===""||cur==null?"":(type==="num"?fmtCLP(cur):type==="date"?fmtDate(cur):cur);
+            const isMainKey=key.indexOf("_")<0;
             return e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:150}},
               e("input",{className:"ec-edit",defaultValue:dv,key:key+"|"+field+"|"+dv,
-                onBlur:ev=>{const raw=ev.target.value;setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
+                onBlur:ev=>{const raw=ev.target.value;
+                  if(field==="ndoc")applyNdocEdit(key,raw,r.debito,isMainKey&&!docs); // trae datos Manager o los vacía
+                  else setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
                 style:{textAlign:al||"left",color:col||C.text}}));
           };
           const mainRow=e("tr",{key:i,className:rowClass},
@@ -1950,8 +1986,8 @@ function App(){
             td(rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):(dd&&dd._byAmount)?badge((dd.razon||"?")+" · por monto","rgba(163,113,247,.18)",C.purple):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
             td(rutVal,"left",C.muted),
             td(mgr||"—","center",dd?null:C.muted),
-            td(d0?d0.codigo:"","left",C.muted),
-            td(d0?d0.centroCosto:"","left",C.muted),
+            td(editVal(edits,ki,"codigo",d0?d0.codigo:""),"left",C.muted),
+            td(editVal(edits,ki,"centroCosto",d0?d0.centroCosto:""),"left",C.muted),
             editable?ed(ki,"ndoc",d0?d0.ndoc:"","left",C.teal,"text"):td(d0?d0.ndoc:"","left",C.teal),
             editable?ed(ki,"fecha",d0?d0.fecha:"","left",C.muted,"date"):td(d0?fmtDate(d0.fecha):"","left",C.muted),
             editable?ed(ki,"total",d0&&d0.total?d0.total:"","right",C.teal,"num"):td("","right"),
@@ -1964,8 +2000,8 @@ function App(){
             td(provName?badge(provName,"rgba(56,139,253,.16)",C.acL):"","left"),
             td(rutVal,"left",C.muted),
             td(badge("📦 Multi",C.accent),"center"),
-            td(dx.codigo||"","left",C.muted),
-            td(dx.centroCosto||"","left",C.muted),
+            td(editVal(edits,ek,"codigo",dx.codigo||""),"left",C.muted),
+            td(editVal(edits,ek,"centroCosto",dx.centroCosto||""),"left",C.muted),
             ed(ek,"ndoc",dx.ndoc||"","left",C.teal,"text"),
             ed(ek,"fecha",dx.fecha||"","left",C.muted,"date"),
             ed(ek,"total",dx.total||"","right",C.teal,"num"),
