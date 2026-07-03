@@ -900,6 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
+const APP_VER="v6 · 2026-07-03";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -2008,7 +2009,7 @@ function App(){
         e("div",{style:{display:"flex",alignItems:"baseline",gap:8}},
           e("span",{style:{fontWeight:800,fontSize:20,letterSpacing:.2,color:C.white}},"Global66"),
           e("span",{style:{fontWeight:600,fontSize:14,color:"rgba(255,255,255,.82)"}},"· Conciliador TC")),
-        e("div",{style:{fontSize:11.5,color:"rgba(255,255,255,.72)"}},"Conciliación Mensual de Tarjetas + Manager"))),
+        e("div",{style:{fontSize:11.5,color:"rgba(255,255,255,.72)"}},"Conciliación Mensual de Tarjetas + Manager · "+APP_VER))),
     e("div",{style:{flex:1,display:"flex",justifyContent:"flex-end"}},authBox));  // auth a la DERECHA
 
   // ════════ TAB CRUCE ════════
