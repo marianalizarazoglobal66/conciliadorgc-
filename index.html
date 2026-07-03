@@ -1669,28 +1669,32 @@ function App(){
   const [cierre,setCierre]=useState("");
   const [edits,setEdits]=useState({});   // ediciones manuales por línea: {lineKey:{ndoc,fecha,total,diff,obs,codigo,centroCosto,_doc,_found}}
   const [extraDocs,setExtraDocs]=useState({}); // docs manuales extra por línea de cobro: {lineKey:[id,...]}
-  const setEdit=(k,f,v)=>setEdits(p=>({...p,[k]:{...(p[k]||{}),[f]:v}}));
+  // refs = fuente de verdad sincronizada (evita leer estado obsoleto al exportar antes del re-render)
+  const editsRef=useRef({}); const extraRef=useRef({});
+  const commitEdits=n=>{editsRef.current=n;setEdits(n);};
+  const commitExtra=n=>{extraRef.current=n;setExtraDocs(n);};
+  const setEdit=(k,f,v)=>{const p=editsRef.current;commitEdits({...p,[k]:{...(p[k]||{}),[f]:v}});};
   // agregar / quitar líneas de documento manuales a una misma línea de cobro
-  const addDocLine=ki=>setExtraDocs(p=>{const arr=p[ki]||[];const nid=arr.length?Math.max.apply(null,arr)+1:0;return {...p,[ki]:[...arr,nid]};});
+  const addDocLine=ki=>{const p=extraRef.current;const arr=p[ki]||[];const nid=arr.length?Math.max.apply(null,arr)+1:0;commitExtra({...p,[ki]:[...arr,nid]});};
   const removeDocLine=(ki,id)=>{
-    setExtraDocs(p=>{const arr=(p[ki]||[]).filter(x=>x!==id);const c={...p};if(arr.length)c[ki]=arr;else delete c[ki];return c;});
-    setEdits(p=>{const c={...p};delete c[ki+"_x"+id];return c;});
+    const pe=extraRef.current;const arr=(pe[ki]||[]).filter(x=>x!==id);const ce={...pe};if(arr.length)ce[ki]=arr;else delete ce[ki];commitExtra(ce);
+    const pd=editsRef.current;const cd={...pd};delete cd[ki+"_x"+id];commitEdits(cd);
   };
   // al escribir un N° Doc en el EECC: trae automáticamente los datos del documento Manager; si no existe, vacía
   const findDocByNdoc=ndoc=>{const q=String(ndoc||"").trim().toLowerCase();if(!q)return null;return docsDB.find(d=>String(d.ndoc||"").trim().toLowerCase()===q)||null;};
   const applyNdocEdit=(key,raw)=>{
     const typed=String(raw||"").trim();
     const found=findDocByNdoc(typed);
-    setEdits(p=>{const cur={...(p[key]||{})};
-      if(found){
-        cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
-        cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");
-        cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;
-      }else{
-        cur.ndoc=typed;cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;
-      }
-      // la diferencia ahora es derivada (débito − suma de docs); no se fija aquí
-      return {...p,[key]:cur};});
+    const p=editsRef.current;const cur={...(p[key]||{})};
+    if(found){
+      cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
+      cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");
+      cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;
+    }else{
+      cur.ndoc=typed;cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;
+    }
+    // la diferencia ahora es derivada (débito − suma de docs); no se fija aquí
+    commitEdits({...p,[key]:cur});
   };
   const [tab,setTab]=useState("cruce");
   const [filter,setFilter]=useState("all");
@@ -1761,7 +1765,7 @@ function App(){
     if(ecRestored.current)return;ecRestored.current=true;
     const s=loadECState();
     if(s&&Array.isArray(s.txs)&&s.txs.length){
-      setTxs(s.txs);setAssignments(s.assignments||[]);setEdits(s.edits||{});setExtraDocs(s.extraDocs||{});
+      setTxs(s.txs);setAssignments(s.assignments||[]);commitEdits(s.edits||{});commitExtra(s.extraDocs||{});
       if(s.cierre)setCierre(s.cierre);setProcessed(true);
       const dias=Math.max(1,7-Math.floor((Date.now()-s.savedAt)/86400000));
       setEcMsg(`↩ Se restauró tu estado de cuenta en edición (guardado en este equipo, se borra en ~${dias} día(s)).`);
@@ -1818,7 +1822,7 @@ function App(){
       const data=await readSheet(file);
       const rows=parseEC(data);
       if(!rows.length){setEcMsg("❌ No se detectaron movimientos. Revisa que el archivo tenga encabezados (Fecha, Tipo, Tercero, Débito).");setLoading(false);return;}
-      setTxs(rows);setEdits({});setExtraDocs({});
+      setTxs(rows);commitEdits({});commitExtra({});
       setAssignments(assignDocs(rows,provs,docsDB));
       setProcessed(true);
       setEcMsg(`✅ ${rows.length} movimientos cargados.`);
@@ -1856,6 +1860,8 @@ function App(){
   // ── marcar documentos como conciliados (para no reutilizarlos en la otra tarjeta) ──
   const dkey=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
   const markConciliados=async()=>{
+    if(typeof document!=="undefined"&&document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+    const edits=editsRef.current, extraDocs=extraRef.current;  // usar el estado más reciente
     const keys=new Set();const docs=[];
     txs.forEach((r,i)=>{const a=assignments[i];if(a&&(a._reversado||a._costoTC))return;
       if(isExcluded(r))return;
@@ -1878,7 +1884,7 @@ function App(){
     try{
       if(sb&&session){for(const d of docs){const r=await sb.from("documentos_manager").update({conciliado:true}).eq("tipo",d.tipo).eq("ndoc",d.ndoc).eq("rut",d.rut);if(r.error)throw r.error;}}
       setDocsDB(prev=>prev.map(d=>keys.has(dkey(d))?{...d,conciliado:true}:d));
-      setTxs([]);setAssignments([]);setProcessed(false);setEdits({});setExtraDocs({});clearECState();
+      setTxs([]);setAssignments([]);setProcessed(false);commitEdits({});commitExtra({});clearECState();
       setEcMsg(`✅ ${docs.length} documento(s) marcados como conciliados. Ahora carga el estado de cuenta de la otra tarjeta.`);
     }catch(err){setEcMsg("❌ "+(err.message||err));}
   };
@@ -2137,9 +2143,9 @@ function App(){
         e("button",{key:"b"+j,onClick:f,disabled:page>=totalPages,style:btnPg(page>=totalPages)},l))),
     // acciones
     processed&&txs.length>0&&e("div",{style:{display:"flex",gap:10,marginTop:16}},
-      e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,monthLabel(cierre),edits,extraDocs),
+      e("button",{className:"btnh",onClick:()=>{if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();exportXLSX(txs,assignments,txProvMatches,monthLabel(cierre),editsRef.current,extraRef.current);},
         style:{background:C.green,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Exportar Excel"),
-      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,monthLabel(cierre),cierre,edits,extraDocs),
+      e("button",{className:"btnh",onClick:()=>{if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();exportCargaMasiva(txs,assignments,txProvMatches,monthLabel(cierre),cierre,editsRef.current,extraRef.current);},
         style:{background:C.purple,color:C.white,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Base Carga Masiva"),
       e("button",{className:"btnh",onClick:markConciliados,
         style:{background:C.teal,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"✓ Marcar conciliados"),
@@ -2147,7 +2153,7 @@ function App(){
         style:{background:C.surf2,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:14}},"⚡ Cargar otro Excel"),
       e("button",{className:"btnh",title:"Borra el estado de cuenta guardado en este equipo",
         onClick:()=>{if(!confirm("¿Descartar el estado de cuenta en edición y su copia guardada en este equipo?"))return;
-          clearECState();setTxs([]);setAssignments([]);setEdits({});setExtraDocs({});setProcessed(false);setEcMsg("🗑 Estado de cuenta descartado.");},
+          clearECState();setTxs([]);setAssignments([]);commitEdits({});commitExtra({});setProcessed(false);setEcMsg("🗑 Estado de cuenta descartado.");},
         style:{background:"transparent",color:C.muted,border:"1px solid "+C.border,borderRadius:8,padding:"10px 18px",fontWeight:600,fontSize:14,marginLeft:"auto"}},"🗑 Descartar")));
 
   // ════════ TAB PROVEEDORES ════════
