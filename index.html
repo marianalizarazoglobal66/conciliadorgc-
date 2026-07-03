@@ -1387,7 +1387,15 @@ function parseDocs(data){
 
 // ══ PARSER PROVEEDORES (import Excel) ═════════════════════════════════════════
 function parseProvsXlsx(data){
-  const hi=detectHeader(data);if(hi<0)return[];
+  // encabezado de proveedores: puede tener solo 3 columnas (Proveedor/RUT/Keyword),
+  // así que buscamos la fila que contenga un título reconocible, no ≥4 celdas.
+  let hi=-1;
+  for(let i=0;i<Math.min(15,data.length);i++){
+    const row=(data[i]||[]).map(c=>String(c||"").trim().toLowerCase());
+    if(row.filter(Boolean).length>=2&&row.some(h=>/proveedor|raz[oó]n|social|nombre/.test(h))){hi=i;break;}
+  }
+  if(hi<0)hi=detectHeader(data);
+  if(hi<0)return[];
   const headers=(data[hi]||[]).map(c=>String(c||"").trim().toLowerCase());
   const col=colFinder(headers);
   const ci={
@@ -1418,7 +1426,37 @@ const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 const editVal=(edits,key,field,base)=>(edits&&edits[key]&&edits[key][field]!==undefined)?edits[key][field]:base;
 const hasEdit=(edits,key,field)=>!!(edits&&edits[key]&&edits[key][field]!==undefined);
 
-function exportXLSX(txs,assignments,provMatches,periodo,edits){
+// slots de documento de una línea de cobro: principal + extras del motor (multi) + extras manuales
+function docSlots(i,d,extraDocs){
+  const ki=String(i);const slots=[];
+  if(d){const list=(d._multi&&d._docs&&d._docs.length)?d._docs:[d];
+    list.forEach((doc,li)=>slots.push({lk:li===0?ki:ki+"_"+(li-1),base:doc,isMain:li===0}));
+  }else slots.push({lk:ki,base:{},isMain:true});
+  ((extraDocs&&extraDocs[ki])||[]).forEach(id=>slots.push({lk:ki+"_x"+id,base:{},isMain:false,manualId:id}));
+  return slots;
+}
+// datos efectivos de un documento (base + ediciones manuales + datos Manager autocompletados)
+function slotDoc(edits,slot){
+  const lk=slot.lk,b=slot.base||{},ev=edits&&edits[lk];
+  return {ndoc:editVal(edits,lk,"ndoc",b.ndoc||""),
+    codigo:editVal(edits,lk,"codigo",b.codigo||""),
+    centroCosto:editVal(edits,lk,"centroCosto",b.centroCosto||""),
+    fecha:editVal(edits,lk,"fecha",b.fecha||""),
+    total:editVal(edits,lk,"total",b.total!=null?b.total:""),
+    tipo:(ev&&ev._doc)?ev._doc.tipo:(b.tipo||""),
+    rut:(ev&&ev._doc)?ev._doc.rut:(b.rut||""),
+    razon:(ev&&ev._doc)?ev._doc.razon:(b.razon||"")};
+}
+// diferencia base de la línea = débito − suma de los totales de TODOS sus documentos
+function lineDiffBase(edits,extraDocs,i,r,d){
+  if(d&&d._frac)return (d._fracMain&&d._diffAmt!=null)?d._diffAmt:"";
+  const docs=docSlots(i,d,extraDocs).map(s=>slotDoc(edits,s)).filter(x=>x.ndoc!==""&&x.ndoc!=null);
+  if(docs.length)return ((r&&r.debito)||0)-docs.reduce((a,x)=>a+(Number(x.total)||0),0);
+  if(d&&d._diffAmt!=null)return d._diffAmt;
+  return "";
+}
+
+function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
   const total=txs.length;
   const matchCount=provMatches.filter(Boolean).length;
   const docCount=assignments.filter(Boolean).length;
@@ -1448,7 +1486,7 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits){
     const d0=docs?docs[0]:dd;
     // valores con edición manual aplicada
     const eN=editVal(edits,ki,"ndoc",d0?d0.ndoc:""), eF=editVal(edits,ki,"fecha",d0?d0.fecha:""), eT=editVal(edits,ki,"total",d0&&d0.total?d0.total:"");
-    const baseDiff=(dd&&!(dd._frac&&!dd._fracMain)&&dd._diffAmt!=null)?dd._diffAmt:"";
+    const baseDiff=lineDiffBase(edits,extraDocs,i,r,dd);
     const eDiff=editVal(edits,ki,"diff",baseDiff);
     const obs=rev?"REVERSADO":(excl?"EXCLUIDA":editVal(edits,ki,"obs",dd?dd._obs:""));
     const money=v=>(v!==""&&v!=null)?"$"+fmtCLP(v):"";
@@ -1464,6 +1502,15 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits){
         td(p?p.nombre:(dd.razon||""))+td(rutTxt)+td("MULTI",'center')+
         td(editVal(edits,ek,"codigo",dx.codigo||""))+td(editVal(edits,ek,"centroCosto",dx.centroCosto||""))+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
     }
+    // documentos manuales adicionales de esta línea (info de cobro en blanco)
+    ((extraDocs&&extraDocs[ki])||[]).forEach(id=>{const lk=ki+"_x"+id,ev=edits&&edits[lk];
+      const xN=editVal(edits,lk,"ndoc","");if(!xN)return;
+      const xF=editVal(edits,lk,"fecha",""),xT=editVal(edits,lk,"total","");
+      const razon=(ev&&ev._doc)?ev._doc.razon:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+      h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
+        td(razon)+td(rut)+td("SI",'center')+
+        td(editVal(edits,lk,"codigo",""))+td(editVal(edits,lk,"centroCosto",""))+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
+    });
   });
   h+='</table>';
   downloadXls(h,`Movimientos_Tarjeta_${(periodo||"periodo").replace(/[^\w]+/g,"_")}.xls`);
@@ -1491,7 +1538,7 @@ function exportProvXLSX(provs){
 }
 
 // ══ BASE CARGA MASIVA (2 hojas) ═══════════════════════════════════════════════
-function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits){
+function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extraDocs){
   const dk=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
   // 1) Documentos únicos asociados (cada documento una vez) — con ediciones manuales
   //    Incluye líneas sin match donde se ingresó un N° Doc a mano (datos tomados del listado Manager).
@@ -1513,11 +1560,20 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits){
       docsRows.push({rut:rut||"",prov:(p&&p.nombre)?p.nombre:(razon||""),codigo:eCod,
         centro:eCen,tipo:tipo,ndoc:eN,fecha:eF,total:eT||0});
     });
+    // documentos manuales adicionales de esta línea de cobro
+    if(!(d&&(d._reversado||d._costoTC)))((extraDocs&&extraDocs[String(i)])||[]).forEach(id=>{
+      const lk=String(i)+"_x"+id,ev=edits&&edits[lk];
+      const eN=editVal(edits,lk,"ndoc","");if(!eN)return;
+      const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=(ev&&ev._doc)?ev._doc.rut:"",razon=(ev&&ev._doc)?ev._doc.razon:"";
+      const k=(tipo||"")+"|"+eN+"|"+(rut||"");if(seen.has(k))return;seen.add(k);
+      docsRows.push({rut:rut||"",prov:(p&&p.nombre)?p.nombre:(razon||""),codigo:editVal(edits,lk,"codigo",""),
+        centro:editVal(edits,lk,"centroCosto",""),tipo:tipo,ndoc:eN,fecha:editVal(edits,lk,"fecha",""),total:editVal(edits,lk,"total",0)||0});
+    });
   });
   // 2) Suma de la columna Diferencia (misma que el Excel de movimientos) — con ediciones
   let totalDiff=0;
   txs.forEach((r,i)=>{if(isExcluded(r))return; const d=assignments[i]; if(d&&d._reversado)return;
-    const base=(d&&!(d._frac&&!d._fracMain)&&d._diffAmt!=null)?d._diffAmt:"";
+    const base=lineDiffBase(edits,extraDocs,i,r,(d&&!d._reversado)?d:null);
     const ev=editVal(edits,String(i),"diff",base); const n=ev===""||ev==null?0:Number(ev);
     if(!isNaN(n))totalDiff+=n;});
   // 3) Proveedores asociados por NOMBRE sin documento (solo nombre y rut, únicos)
@@ -1599,10 +1655,17 @@ function App(){
   const [loading,setLoading]=useState(false);
   const [cierre,setCierre]=useState("");
   const [edits,setEdits]=useState({});   // ediciones manuales por línea: {lineKey:{ndoc,fecha,total,diff,obs,codigo,centroCosto,_doc,_found}}
+  const [extraDocs,setExtraDocs]=useState({}); // docs manuales extra por línea de cobro: {lineKey:[id,...]}
   const setEdit=(k,f,v)=>setEdits(p=>({...p,[k]:{...(p[k]||{}),[f]:v}}));
+  // agregar / quitar líneas de documento manuales a una misma línea de cobro
+  const addDocLine=ki=>setExtraDocs(p=>{const arr=p[ki]||[];const nid=arr.length?Math.max.apply(null,arr)+1:0;return {...p,[ki]:[...arr,nid]};});
+  const removeDocLine=(ki,id)=>{
+    setExtraDocs(p=>{const arr=(p[ki]||[]).filter(x=>x!==id);const c={...p};if(arr.length)c[ki]=arr;else delete c[ki];return c;});
+    setEdits(p=>{const c={...p};delete c[ki+"_x"+id];return c;});
+  };
   // al escribir un N° Doc en el EECC: trae automáticamente los datos del documento Manager; si no existe, vacía
   const findDocByNdoc=ndoc=>{const q=String(ndoc||"").trim().toLowerCase();if(!q)return null;return docsDB.find(d=>String(d.ndoc||"").trim().toLowerCase()===q)||null;};
-  const applyNdocEdit=(key,raw,debito,recalcDiff)=>{
+  const applyNdocEdit=(key,raw)=>{
     const typed=String(raw||"").trim();
     const found=findDocByNdoc(typed);
     setEdits(p=>{const cur={...(p[key]||{})};
@@ -1610,11 +1673,10 @@ function App(){
         cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
         cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");
         cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;
-        if(recalcDiff)cur.diff=(debito||0)-(found.total||0);
       }else{
         cur.ndoc=typed;cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;
-        if(recalcDiff)cur.diff="";
       }
+      // la diferencia ahora es derivada (débito − suma de docs); no se fija aquí
       return {...p,[key]:cur};});
   };
   const [tab,setTab]=useState("cruce");
@@ -1727,7 +1789,7 @@ function App(){
       const data=await readSheet(file);
       const rows=parseEC(data);
       if(!rows.length){setEcMsg("❌ No se detectaron movimientos. Revisa que el archivo tenga encabezados (Fecha, Tipo, Tercero, Débito).");setLoading(false);return;}
-      setTxs(rows);setEdits({});
+      setTxs(rows);setEdits({});setExtraDocs({});
       setAssignments(assignDocs(rows,provs,docsDB));
       setProcessed(true);
       setEcMsg(`✅ ${rows.length} movimientos cargados.`);
@@ -1775,13 +1837,19 @@ function App(){
         const tipo=(ev&&ev._doc)?ev._doc.tipo:(d.tipo||"");
         const rut=(ev&&ev._doc)?ev._doc.rut:(d.rut||"");
         const doc={...d,tipo,rut,ndoc:eN};const k=dkey(doc);
-        if(eN&&!keys.has(k)){keys.add(k);docs.push(doc);}});});
+        if(eN&&!keys.has(k)){keys.add(k);docs.push(doc);}});
+      // documentos manuales adicionales de esta línea
+      ((extraDocs&&extraDocs[String(i)])||[]).forEach(id=>{const lk=String(i)+"_x"+id;const ev=edits&&edits[lk];
+        const eN=editVal(edits,lk,"ndoc","");if(!eN)return;
+        const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+        const doc={tipo,rut,ndoc:eN};const k=dkey(doc);
+        if(!keys.has(k)){keys.add(k);docs.push(doc);}});});
     if(!docs.length){setEcMsg("No hay documentos asociados para marcar.");return;}
     if(!confirm(`¿Marcar ${docs.length} documento(s) como conciliados? No se volverán a usar en la otra tarjeta. (Se reinician al recargar el listado Manager.)`))return;
     try{
       if(sb&&session){for(const d of docs){const r=await sb.from("documentos_manager").update({conciliado:true}).eq("tipo",d.tipo).eq("ndoc",d.ndoc).eq("rut",d.rut);if(r.error)throw r.error;}}
       setDocsDB(prev=>prev.map(d=>keys.has(dkey(d))?{...d,conciliado:true}:d));
-      setTxs([]);setAssignments([]);setProcessed(false);
+      setTxs([]);setAssignments([]);setProcessed(false);setEdits({});setExtraDocs({});
       setEcMsg(`✅ ${docs.length} documento(s) marcados como conciliados. Ahora carga el estado de cuenta de la otra tarjeta.`);
     }catch(err){setEcMsg("❌ "+(err.message||err));}
   };
@@ -1963,18 +2031,35 @@ function App(){
           const d0=docs?docs[0]:dd;
           const ki=String(i);
           const editable=!excl&&!rev;     // las líneas excluidas/reversadas no se editan
-          const baseDiff=(dd&&dd._diffAmt!=null&&!(dd._frac&&!dd._fracMain))?dd._diffAmt:"";
+          const baseDiff=lineDiffBase(edits,extraDocs,i,r,dd);  // débito − suma de docs de la línea
           // celda editable (N° Doc, Fecha Doc, Total Doc, Diferencia, Observaciones)
           const ed=(key,field,baseVal,al,col,type)=>{
             const cur=editVal(edits,key,field,baseVal);
             const dv=cur===""||cur==null?"":(type==="num"?fmtCLP(cur):type==="date"?fmtDate(cur):cur);
-            const isMainKey=key.indexOf("_")<0;
             return e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:150}},
               e("input",{className:"ec-edit",defaultValue:dv,key:key+"|"+field+"|"+dv,
                 onBlur:ev=>{const raw=ev.target.value;
-                  if(field==="ndoc")applyNdocEdit(key,raw,r.debito,isMainKey&&!docs); // trae datos Manager o los vacía
+                  if(field==="ndoc")applyNdocEdit(key,raw); // trae datos Manager o los vacía
                   else setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
                 style:{textAlign:al||"left",color:col||C.text}}));
+          };
+          // fila de documento manual adicional (info de cobro de la tarjeta en blanco)
+          const manualDocRow=id=>{const lk=ki+"_x"+id,ev=edits&&edits[lk];
+            const razon=(ev&&ev._doc)?ev._doc.razon:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+            return e("tr",{key:lk,className:rowClass},
+              e("td",{style:{padding:"3px 6px",borderBottom:"1px solid "+C.border,textAlign:"center"}},
+                e("button",{onClick:()=>removeDocLine(ki,id),title:"Quitar este documento",style:{...iconBtn,color:C.red,marginRight:0}},"🗑")),
+              e("td",{style:{padding:"7px 8px",borderBottom:"1px solid "+C.border}},""),
+              td("","left"),td("","center"),td("","right"),td("","right"),
+              td(razon?badge(razon,"rgba(56,139,253,.16)",C.acL):"","left"),
+              td(rut||"","left",C.muted),
+              td((ev&&ev._found)?badge("Sí",C.teal,C.bg):"—","center",C.muted),
+              td(editVal(edits,lk,"codigo",""),"left",C.muted),
+              td(editVal(edits,lk,"centroCosto",""),"left",C.muted),
+              ed(lk,"ndoc","","left",C.teal,"text"),
+              ed(lk,"fecha","","left",C.muted,"date"),
+              ed(lk,"total","","right",C.teal,"num"),
+              td("","right"),td("","left"));
           };
           const mainRow=e("tr",{key:i,className:rowClass},
             td(fmtDate(r.fecha),"left",C.muted),
@@ -1985,7 +2070,10 @@ function App(){
             td(r.abono?fmtCLP(r.abono):"","right",C.green),
             td(rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):(dd&&dd._byAmount)?badge((dd.razon||"?")+" · por monto","rgba(163,113,247,.18)",C.purple):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red))),
             td(rutVal,"left",C.muted),
-            td(mgr||"—","center",dd?null:C.muted),
+            e("td",{style:{padding:"5px 8px",textAlign:"center",borderBottom:"1px solid "+C.border,color:dd?null:C.muted}},
+              mgr||"—",
+              editable?e("button",{onClick:()=>addDocLine(ki),title:"Agregar otro documento a esta línea de cobro",
+                style:{display:"block",margin:"3px auto 0",background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},"+ doc"):null),
             td(editVal(edits,ki,"codigo",d0?d0.codigo:""),"left",C.muted),
             td(editVal(edits,ki,"centroCosto",d0?d0.centroCosto:""),"left",C.muted),
             editable?ed(ki,"ndoc",d0?d0.ndoc:"","left",C.teal,"text"):td(d0?d0.ndoc:"","left",C.teal),
@@ -1993,7 +2081,8 @@ function App(){
             editable?ed(ki,"total",d0&&d0.total?d0.total:"","right",C.teal,"num"):td("","right"),
             editable?ed(ki,"diff",baseDiff,"right",C.text,"num"):td("","right"),
             editable?ed(ki,"obs",dd?dd._obs:"","left",C.yellow,"text"):td(rev?"Reversado":(excl?"⛔ Excluida":""),"left",C.red));
-          if(!docs)return [mainRow];
+          const manual=((extraDocs&&extraDocs[ki])||[]).map(manualDocRow);
+          if(!docs)return [mainRow,...manual];
           const extra=docs.slice(1).map((dx,k)=>{const ek=i+"_"+k;return e("tr",{key:ek,className:rowClass},
             td("","left"),e("td",{style:{padding:"7px 8px",borderBottom:"1px solid "+C.border}},""),td("","left"),td("","center"),
             td("","right"),td("","right"),
@@ -2006,7 +2095,7 @@ function App(){
             ed(ek,"fecha",dx.fecha||"","left",C.muted,"date"),
             ed(ek,"total",dx.total||"","right",C.teal,"num"),
             td("","right"),td("","left"));});
-          return [mainRow,...extra];
+          return [mainRow,...extra,...manual];
         })))),
     // paginación
     processed&&txView.length>0&&e("div",{style:{display:"flex",alignItems:"center",gap:8,marginTop:12,flexWrap:"wrap"}},
@@ -2019,9 +2108,9 @@ function App(){
         e("button",{key:"b"+j,onClick:f,disabled:page>=totalPages,style:btnPg(page>=totalPages)},l))),
     // acciones
     processed&&txs.length>0&&e("div",{style:{display:"flex",gap:10,marginTop:16}},
-      e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,monthLabel(cierre),edits),
+      e("button",{className:"btnh",onClick:()=>exportXLSX(txs,assignments,txProvMatches,monthLabel(cierre),edits,extraDocs),
         style:{background:C.green,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Exportar Excel"),
-      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,monthLabel(cierre),cierre,edits),
+      e("button",{className:"btnh",onClick:()=>exportCargaMasiva(txs,assignments,txProvMatches,monthLabel(cierre),cierre,edits,extraDocs),
         style:{background:C.purple,color:C.white,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"⬇ Base Carga Masiva"),
       e("button",{className:"btnh",onClick:markConciliados,
         style:{background:C.teal,color:C.bg,border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:14}},"✓ Marcar conciliados"),
