@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v8 · 2026-07-03";  // sello de build para verificar despliegue
+const APP_VER="v9 · 2026-07-03";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1290,24 +1290,32 @@ function assignDocs(txs,provs,docsDB){
   const AMT_BAND=0.01; // coincidencia de valor: exacto (±1% o $100)
   // un proveedor "tiene documentos" si existe algún doc con su RUT (cualquier mes)
   const provTieneDoc=p=>p&&p.rut&&docsDB.some(d=>normRut(d.rut)===normRut(p.rut));
+  // palabras significativas para comparar nombre del comercio vs razón social del documento
+  const AMT_STOP=new Set(["de","del","la","el","los","las","spa","s.a","sa","ltda","limitada","inc","llc","com","www","pago","compra","cargo","mp","dl","pay","paypal","sumup","google","chile","the","and"]);
+  const amtWords=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>=3&&!AMT_STOP.has(w));
+  const nameScore=(a,b)=>{const B=new Set(b);let n=0;for(const w of a)if(B.has(w))n++;return n;};
   txs.forEach((tx,i)=>{
     if(result[i]||excluded[i]||isNoMatch(tx)||!(tx.debito>0))return;   // solo egresos SIN documento
     // Respetar el proveedor por nombre/keyword: si identificó un proveedor que SÍ tiene
     // documentos, NO se reasigna por monto (ej. Amazon). El match por monto solo actúa si no
     // hay proveedor, o si el proveedor identificado no tiene ningún documento (keyword erróneo).
     if(provOf[i]&&provTieneDoc(provOf[i]))return;
-    const amt=tx.debito; const td=parseDate(tx.fecha);
-    let best=null,bestDiff=Infinity;
+    const amt=tx.debito; const td=parseDate(tx.fecha); const tw=amtWords((tx.tercero||"")+" "+(tx.tipo||""));
+    // entre los documentos que coinciden en monto y fecha, preferir el que además coincida en NOMBRE
+    let best=null,bestScore=-1,bestDiff=Infinity;
     for(const doc of docsDB){
       if(!(doc.total>0)||usedDoc.has(dk(doc)))continue;
       const dd=parseDate(doc.fecha);
       if(!within(dd,td,NEAR))continue;
       const diff=Math.abs(doc.total-amt);
-      if(diff<=Math.max(100,amt*AMT_BAND)&&diff<bestDiff){bestDiff=diff;best=doc;}
+      if(diff>Math.max(100,amt*AMT_BAND))continue;
+      const score=nameScore(tw,amtWords(doc.razon));
+      if(score>bestScore||(score===bestScore&&diff<bestDiff)){bestScore=score;bestDiff=diff;best=doc;}
     }
     if(best){
       usedDoc.add(dk(best));
-      result[i]={...best,_diffAmt:amt-best.total,_byAmount:true,_obs:"Proveedor asignado por monto"};
+      // marca si el match por monto NO tiene ninguna coincidencia de nombre (más incierto)
+      result[i]={...best,_diffAmt:amt-best.total,_byAmount:true,_amtNoName:bestScore<=0,_obs:"Proveedor asignado por monto"};
     }
   });
   return result;
@@ -1496,8 +1504,9 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
     let mgr=(excl||rev||ctc)?"":dd?(dd._frac?"FRACC.":dd._multi?"MULTI":"SI"):"";
     if(!dd&&!excl&&!rev&&edits&&edits[ki]&&edits[ki]._found)mgr="SI";
     const td=(v,al)=>`<td style="padding:4px;text-align:${al||'left'}">${esc(v)}</td>`;
-    const provTxt=rev?"REVERSADO":(excl?"EXCLUIDA":((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))));
-    const rutTxt=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
+    const mDoc=(edits&&edits[ki]&&edits[ki]._doc)?edits[ki]._doc:null; // doc asociado a mano
+    const provTxt=rev?"REVERSADO":(excl?"EXCLUIDA":mDoc?(mDoc.razon||""):((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))));
+    const rutTxt=rev?"":(mDoc?mDoc.rut:((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))));
     const docs=(dd&&dd._multi&&dd._docs&&dd._docs.length>1)?dd._docs:null;
     const d0=docs?docs[0]:dd;
     // valores con edición manual aplicada
@@ -2095,8 +2104,12 @@ function App(){
           const hasDocLine=lineHasDoc(i);            // tiene documento efectivo (motor o manual)
           const rowClass=(excl||rev)?"rexcl":ctc?"rn":dd&&dd._frac?"rfrac":dd&&dd._multi?"rmulti":(dd||hasDocLine)?"rm":"rn";
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
-          const provName=p?p.nombre:(dd&&dd.razon?dd.razon:"");
-          const rutVal=rev?"":((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
+          const mDoc=(edits[ki]&&edits[ki]._doc)?edits[ki]._doc:null; // documento asociado a mano (encontrado en Manager)
+          const provName=mDoc?mDoc.razon:(p?p.nombre:(dd&&dd.razon?dd.razon:""));
+          const rutVal=rev?"":(mDoc?mDoc.rut:((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))));
+          // RUT para filtrar la búsqueda manual: solo el confiable (match por nombre/RUT o doc del motor),
+          // NUNCA el adivinado por monto — así una línea "por monto" errónea se puede corregir a mano.
+          const filterRut=p?(p.rut||""):((dd&&!dd._byAmount)?(dd.rut||""):"");
           // documentos múltiples → primera línea con el 1er documento; el resto en líneas extra
           const docs=(dd&&dd._multi&&dd._docs&&dd._docs.length>1)?dd._docs:null;
           const d0=docs?docs[0]:dd;
@@ -2118,7 +2131,7 @@ function App(){
             return e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:150,background:warn?"rgba(248,81,73,.12)":undefined}},
               e("input",{className:"ec-edit",defaultValue:dv,key:key+"|"+field+"|"+dv,title:warn||undefined,
                 onBlur:ev=>{const raw=ev.target.value;
-                  if(field==="ndoc")applyNdocEdit(key,raw,rutVal); // trae doc que coincida en N° Doc y RUT del proveedor
+                  if(field==="ndoc")applyNdocEdit(key,raw,filterRut); // trae doc que coincida en N° Doc y RUT del proveedor
                   else setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
                 style:{textAlign:al||"left",color:warn?C.red:(col||C.text),fontWeight:warn?700:undefined}}));
           };
@@ -2148,7 +2161,7 @@ function App(){
             td(r.debito?fmtCLP(r.debito):"","right",C.red),
             td(r.abono?fmtCLP(r.abono):"","right",C.green),
             e("td",{style:{padding:"6px 8px",borderBottom:"1px solid "+C.border,maxWidth:220}},
-              rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):(dd&&dd._byAmount)?badge((dd.razon||"?")+" · por monto","rgba(163,113,247,.18)",C.purple):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red)),
+              rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):mDoc?badge(mDoc.razon||"—","rgba(63,185,80,.18)",C.green):(dd&&dd._byAmount)?e("span",{title:dd._amtNoName?"Asignado solo por monto — el nombre NO coincide con el comercio. Verifícalo.":"Asignado por coincidencia de monto"},badge((dd.razon||"?")+" · por monto"+(dd._amtNoName?" ⚠":""),dd._amtNoName?"rgba(210,153,34,.20)":"rgba(163,113,247,.18)",dd._amtNoName?C.yellow:C.purple)):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red)),
               rawRev?e("button",{onClick:()=>setEdit(ki,"_unrev",!unrev),title:unrev?"Volver a marcar como reversado":"Incluir esta línea (quitar reversado) para asociarle proveedor y documento",
                 style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unrev?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unrev?"↩ marcar reversado":"✎ incluir"):null),
             td(rutVal,"left",C.muted),
