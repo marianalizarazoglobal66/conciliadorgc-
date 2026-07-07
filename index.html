@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v7 · 2026-07-03";  // sello de build para verificar despliegue
+const APP_VER="v8 · 2026-07-03";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1683,11 +1683,19 @@ function App(){
     const pe=extraRef.current;const arr=(pe[ki]||[]).filter(x=>x!==id);const ce={...pe};if(arr.length)ce[ki]=arr;else delete ce[ki];commitExtra(ce);
     const pd=editsRef.current;const cd={...pd};delete cd[ki+"_x"+id];commitEdits(cd);
   };
-  // al escribir un N° Doc en el EECC: trae automáticamente los datos del documento Manager; si no existe, vacía
-  const findDocByNdoc=ndoc=>{const q=String(ndoc||"").trim().toLowerCase();if(!q)return null;return docsDB.find(d=>String(d.ndoc||"").trim().toLowerCase()===q)||null;};
-  const applyNdocEdit=(key,raw)=>{
+  // al escribir un N° Doc en el EECC: trae el documento Manager que coincida con el N° Doc.
+  // Si la línea ya tiene un RUT de proveedor identificado, EXIGE que el documento sea de ese RUT
+  // (no toma cualquier documento con el mismo número). Si no lo encuentra, deja los campos vacíos.
+  const findDoc=(ndoc,rut)=>{
+    const q=String(ndoc||"").trim().toLowerCase();if(!q)return null;
+    const matches=docsDB.filter(d=>String(d.ndoc||"").trim().toLowerCase()===q);
+    if(!matches.length)return null;
+    if(rut){const rr=normRut(rut);return matches.find(d=>normRut(d.rut)===rr)||null;} // con RUT → solo coincidencia exacta de RUT
+    return matches[0];                                                                  // sin RUT identificado → primer match por número
+  };
+  const applyNdocEdit=(key,raw,expectedRut)=>{
     const typed=String(raw||"").trim();
-    const found=findDocByNdoc(typed);
+    const found=findDoc(typed,expectedRut);
     const p=editsRef.current;const cur={...(p[key]||{})};
     if(found){
       cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
@@ -1750,6 +1758,18 @@ function App(){
     return {matchCount:m,docCount:dc,exclCount:ex,idCount:idc,noIdCount:ni};
   },[txProvMatches,assignments,txs,edits,extraDocs]);
   const pctId=useMemo(()=>{const den=txs.length-exclCount;return den>0?Math.round(idCount/den*100):0;},[idCount,exclCount,txs]);
+  // ── useMemo: documentos repetidos (mismo N° Doc + RUT en más de una línea) ──
+  const dupKey=(nd,rut)=>String(nd||"").trim().toLowerCase()+"|"+normRut(rut||"");
+  const dupMap=useMemo(()=>{
+    const m=new Map();
+    txs.forEach((r,i)=>{
+      if(isExcluded(r))return; if(isReversado(assignments[i],edits,String(i)))return;
+      const d=assignments[i], dd=(d&&!d._reversado)?d:null;
+      docSlots(i,dd,extraDocs).forEach(s=>{const sd=slotDoc(edits,s);const nd=String(sd.ndoc||"").trim();if(!nd)return;
+        const k=dupKey(nd,sd.rut);if(!m.has(k))m.set(k,[]);m.get(k).push({i,tercero:r.tercero,fecha:r.fecha});});
+    });
+    return m;
+  },[txs,assignments,edits,extraDocs]);
   // ── useMemo: filtrado + vista ─────────────────────────────────────────────
   const txView=useMemo(()=>txs.map((r,i)=>({...r,_origIdx:i,_prov:txProvMatches[i]})).filter(r=>{
     const i=r._origIdx;
@@ -2086,16 +2106,21 @@ function App(){
           // línea sin doc del motor pero con N° Doc ingresado a mano → "Sí"
           if(!dd&&!excl&&!rev&&mainNdoc)mgr=badge("Sí",C.teal,C.bg);
           const baseDiff=lineDiffBase(edits,extraDocs,i,r,dd);  // débito − suma de docs de la línea
-          // celda editable (N° Doc, Fecha Doc, Total Doc, Diferencia, Observaciones)
-          const ed=(key,field,baseVal,al,col,type)=>{
+          // RUT efectivo de un slot + alerta de documento repetido
+          const slotRut=(lk,base)=>{const ev=edits&&edits[lk];return (ev&&ev._doc)?ev._doc.rut:((base&&base.rut)||"");};
+          const dupWarn=(nd,rut)=>{if(!nd)return null;const arr=dupMap.get(dupKey(nd,rut));if(!arr||arr.length<2)return null;
+            const locs=[...new Set(arr.map(x=>(x.tercero||"?")+" ("+fmtDate(x.fecha)+")"))];
+            return "⚠ Este documento ya está registrado en "+arr.length+" líneas: "+locs.join(" · ");};
+          // celda editable (N° Doc, Fecha Doc, Total Doc, Diferencia, Observaciones); warn = alerta duplicado
+          const ed=(key,field,baseVal,al,col,type,warn)=>{
             const cur=editVal(edits,key,field,baseVal);
             const dv=cur===""||cur==null?"":(type==="num"?fmtCLP(cur):type==="date"?fmtDate(cur):cur);
-            return e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:150}},
-              e("input",{className:"ec-edit",defaultValue:dv,key:key+"|"+field+"|"+dv,
+            return e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:150,background:warn?"rgba(248,81,73,.12)":undefined}},
+              e("input",{className:"ec-edit",defaultValue:dv,key:key+"|"+field+"|"+dv,title:warn||undefined,
                 onBlur:ev=>{const raw=ev.target.value;
-                  if(field==="ndoc")applyNdocEdit(key,raw); // trae datos Manager o los vacía
+                  if(field==="ndoc")applyNdocEdit(key,raw,rutVal); // trae doc que coincida en N° Doc y RUT del proveedor
                   else setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
-                style:{textAlign:al||"left",color:col||C.text}}));
+                style:{textAlign:al||"left",color:warn?C.red:(col||C.text),fontWeight:warn?700:undefined}}));
           };
           // fila de documento manual adicional (info de cobro de la tarjeta en blanco)
           const manualDocRow=id=>{const lk=ki+"_x"+id,ev=edits&&edits[lk];
@@ -2110,7 +2135,7 @@ function App(){
               td((ev&&ev._found)?badge("Sí",C.teal,C.bg):"—","center",C.muted),
               td(editVal(edits,lk,"codigo",""),"left",C.muted),
               td(editVal(edits,lk,"centroCosto",""),"left",C.muted),
-              ed(lk,"ndoc","","left",C.teal,"text"),
+              ed(lk,"ndoc","","left",C.teal,"text",dupWarn(editVal(edits,lk,"ndoc",""),slotRut(lk,{}))),
               ed(lk,"fecha","","left",C.muted,"date"),
               ed(lk,"total","","right",C.teal,"num"),
               td("","right"),td("","left"));
@@ -2133,7 +2158,7 @@ function App(){
                 style:{display:"block",margin:"3px auto 0",background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},"+ doc"):null),
             td(editVal(edits,ki,"codigo",d0?d0.codigo:""),"left",C.muted),
             td(editVal(edits,ki,"centroCosto",d0?d0.centroCosto:""),"left",C.muted),
-            editable?ed(ki,"ndoc",d0?d0.ndoc:"","left",C.teal,"text"):td(d0?d0.ndoc:"","left",C.teal),
+            editable?ed(ki,"ndoc",d0?d0.ndoc:"","left",C.teal,"text",dupWarn(mainNdoc,slotRut(ki,d0))):td(d0?d0.ndoc:"","left",C.teal),
             editable?ed(ki,"fecha",d0?d0.fecha:"","left",C.muted,"date"):td(d0?fmtDate(d0.fecha):"","left",C.muted),
             editable?ed(ki,"total",d0&&d0.total?d0.total:"","right",C.teal,"num"):td("","right"),
             editable?ed(ki,"diff",baseDiff,"right",C.text,"num"):td("","right"),
@@ -2148,7 +2173,7 @@ function App(){
             td(badge("📦 Multi",C.accent),"center"),
             td(editVal(edits,ek,"codigo",dx.codigo||""),"left",C.muted),
             td(editVal(edits,ek,"centroCosto",dx.centroCosto||""),"left",C.muted),
-            ed(ek,"ndoc",dx.ndoc||"","left",C.teal,"text"),
+            ed(ek,"ndoc",dx.ndoc||"","left",C.teal,"text",dupWarn(editVal(edits,ek,"ndoc",dx.ndoc||""),slotRut(ek,dx))),
             ed(ek,"fecha",dx.fecha||"","left",C.muted,"date"),
             ed(ek,"total",dx.total||"","right",C.teal,"num"),
             td("","right"),td("","left"));});
