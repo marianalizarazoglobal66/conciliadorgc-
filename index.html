@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v9 · 2026-07-03";  // sello de build para verificar despliegue
+const APP_VER="v10 · 2026-07-09";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1617,7 +1617,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
 
   // ── HOJA 2 — CARGA MASIVA (layout exacto del formato: 22 columnas; solo se llenan las obligatorias) ──
   const glosa="MLH ESTADO DE CUENTA "+(periodo||"");
-  const cuenta=t=>{const u=String(t||"").toUpperCase();return(u==="FACE"||u==="COMEX"||u==="FCEE"||u==="BOH")?"210401":(u==="INTST"?"210404":"");};
+  const cuenta=t=>{const u=String(t||"").toUpperCase();return(u==="BOH"||u==="BOR")?"210405":(u==="FACE"||u==="COMEX"||u==="FCEE")?"210401":(u==="INTST"?"210404":"");};
   const COLS=["Tipo de comprobante","Esquema","Glosa comprobante","Fecha contable","Total debe","Total haber","Ítem detalle comprobante","Código unidad de negocio","Glosa detalle","RUT cliente","RUT personal","Código cuenta contable","Código centro costos","Monto debe","Monto haber","Tipo de documento","Fecha de documento","Número de documento","Concepto 1","Concepto 2","Concepto 3","Concepto 4"];
   const h2=[COLS];
   docsRows.forEach((x,n)=>h2.push([
