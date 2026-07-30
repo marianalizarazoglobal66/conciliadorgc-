@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v10 · 2026-07-09";  // sello de build para verificar despliegue
+const APP_VER="v11 · 2026-07-09";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1720,6 +1720,7 @@ function App(){
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
   const [searchP,setSearchP]=useState("");
+  const [searchD,setSearchD]=useState("");
   const [page,setPage]=useState(1);
   const [docsName,setDocsName]=useState("");
   const [docsMsg,setDocsMsg]=useState("");
@@ -1798,6 +1799,11 @@ function App(){
     if(!searchP)return true;const s=searchP.toLowerCase();
     return p.nombre.toLowerCase().includes(s)||String(p.rut||"").includes(s)||String(p.kw||"").toLowerCase().includes(s);
   }),[provs,searchP]);
+  // ── filtro documentos Manager (por razón social, RUT o N° Doc) ──
+  const filtDocs=useMemo(()=>{
+    if(!searchD.trim())return docsDB;const s=searchD.toLowerCase();const sr=normRut(searchD);
+    return docsDB.filter(d=>String(d.razon||"").toLowerCase().includes(s)||normRut(d.rut).includes(sr)||String(d.ndoc||"").toLowerCase().includes(s));
+  },[docsDB,searchD]);
 
   // ── useEffects ────────────────────────────────────────────────────────────
   useEffect(()=>{if(txs.length>0)setAssignments(assignDocs(txs,provs,docsDB));},[provs,docsDB]);
@@ -2269,11 +2275,14 @@ function App(){
       ?e("div",{style:{marginBottom:12}},dz("dz-g",dragDocs,setDragDocs,loadDocs,docsRef,"Cargar Excel Manager","Arrastra o haz clic · .xlsx .xls .csv · reemplaza el listado en la nube"))
       :sb&&e("div",{style:{marginBottom:12,padding:"12px 14px",background:C.surf,border:"1px dashed "+C.border,borderRadius:10,fontSize:13,color:C.muted}},"🔒 Inicia sesión para cargar/reemplazar el listado Manager. (Solo lectura)"),
     docsMsg&&e("div",{style:{marginBottom:12,fontSize:13,color:docsMsg[0]==="✅"?C.green:C.red}},docsMsg),
+    e("input",{value:searchD,onChange:ev=>setSearchD(ev.target.value),placeholder:"🔍 Buscar por razón social, RUT o N° Doc…",
+      style:{width:"100%",boxSizing:"border-box",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:14,marginBottom:8}}),
+    e("div",{style:{fontSize:12,color:C.muted,marginBottom:8}},`${filtDocs.length} de ${docsDB.length} documentos`),
     e("div",{style:{border:"1px solid "+C.border,borderRadius:10,overflow:"auto",background:C.surf,maxHeight:600}},
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12.5}},
         e("thead",null,e("tr",null,["Tipo","N° Doc","RUT","Razón Social","Fecha","Total (CLP)","Cod. Servicio","Centro Costo","Descripción"].map((hh,j)=>
           e("th",{key:j,style:{background:C.surf2,color:C.teal,padding:"9px 9px",textAlign:j===5?"right":"left",borderBottom:"1px solid "+C.border,position:"sticky",top:0,fontSize:11,fontWeight:700}},hh)))),
-        e("tbody",null,docsDB.slice(0,1000).map((d,j)=>e("tr",{key:j,className:"rn"},
+        e("tbody",null,filtDocs.slice(0,1000).map((d,j)=>e("tr",{key:j,className:"rn"},
           e("td",{style:tdP(C.muted)},d.tipo),
           e("td",{style:tdP()},d.ndoc),
           e("td",{style:tdP(C.muted)},d.rut),
@@ -2283,7 +2292,7 @@ function App(){
           e("td",{style:tdP(C.muted)},d.codigo),
           e("td",{style:tdP(C.acL)},d.centroCosto),
           e("td",{style:tdP(C.muted)},d.descripcion))))),
-      docsDB.length>1000&&e("div",{style:{padding:10,fontSize:12,color:C.muted,textAlign:"center"}},"Mostrando primeros 1000")));
+      filtDocs.length>1000&&e("div",{style:{padding:10,fontSize:12,color:C.muted,textAlign:"center"}},"Mostrando primeros 1000 · refina la búsqueda")));
 
   // ════════ MODAL LOGIN ════════
   const loginModal=showLogin&&e("div",{onClick:()=>setShowLogin(false),
