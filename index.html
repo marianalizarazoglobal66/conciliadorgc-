@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v11 · 2026-07-09";  // sello de build para verificar despliegue
+const APP_VER="v12 · 2026-07-09";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1726,6 +1726,7 @@ function App(){
   const [docsMsg,setDocsMsg]=useState("");
   const [ecMsg,setEcMsg]=useState("");
   const [dragDocs,setDragDocs]=useState(false);
+  const [dragDocsAdd,setDragDocsAdd]=useState(false);
   const [dragEC,setDragEC]=useState(false);
   const [dragProv,setDragProv]=useState(false);
   const [showForm,setShowForm]=useState(false);
@@ -1739,7 +1740,7 @@ function App(){
   const [authPass,setAuthPass]=useState("");
   const [authErr,setAuthErr]=useState("");
   const [authBusy,setAuthBusy]=useState(false);
-  const ecRef=useRef();const docsRef=useRef();const provRef=useRef();
+  const ecRef=useRef();const docsRef=useRef();const docsAddRef=useRef();const provRef=useRef();
   const PAGE_SIZE=100;
   // Puede editar si NO hay nube (modo archivo local) o si hay sesión iniciada.
   const canEdit=!sb||!!session;
@@ -1907,6 +1908,35 @@ function App(){
       }
     }catch(err){setDocsMsg("❌ Error: "+(err.message||err));}
   },[session]);
+
+  // ── AGREGAR documentos (complementa la base existente, sin borrarla) ──────────
+  const appendDocs=useCallback(async file=>{
+    if(!file)return;setDocsMsg("");
+    try{
+      const data=await readSheet(file);
+      const rows=parseDocs(data);
+      if(!rows.length){setDocsMsg("❌ No se detectaron documentos válidos.");return;}
+      const dk=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
+      const existing=new Set(docsDB.map(dk));
+      const nuevos=[];const vistos=new Set();
+      for(const r of rows){
+        const d={tipo:r.tipo,ndoc:r.ndoc,rut:r.rut,razon:r.razon,fecha:r.fecha,total:r.total,codigo:r.codigo,descripcion:r.descripcion,centroCosto:r.centroCosto||"",conciliado:false};
+        const k=dk(d); if(existing.has(k)||vistos.has(k))continue; vistos.add(k); nuevos.push(d);
+      }
+      const dupCount=rows.length-nuevos.length;
+      if(!nuevos.length){setDocsMsg(`ℹ️ Los ${rows.length} documentos del archivo ya están en la base — nada nuevo que agregar.`);return;}
+      if(sb&&session){
+        setDocsMsg("⏳ Agregando a la nube…");
+        const dbRows=nuevos.map(r=>({tipo:r.tipo,ndoc:r.ndoc,rut:r.rut,razon:r.razon,fecha:r.fecha,total:r.total,codigo:r.codigo,descripcion:r.descripcion,centro_costo:r.centroCosto}));
+        for(let i=0;i<dbRows.length;i+=500){const ins=await sb.from("documentos_manager").insert(dbRows.slice(i,i+500));if(ins.error)throw ins.error;}
+        setDocsDB(prev=>[...prev,...nuevos]);
+        setDocsMsg(`✅ ${nuevos.length} documento(s) agregado(s) a la base${dupCount?` · ${dupCount} ya existían (omitidos)`:""}. Total ahora: ${docsDB.length+nuevos.length}.`);
+      }else{
+        setDocsDB(prev=>[...prev,...nuevos]);
+        setDocsMsg(`✅ ${nuevos.length} documento(s) agregado(s) en esta sesión${dupCount?` · ${dupCount} ya existían`:""} — inicia sesión para guardarlos en la nube.`);
+      }
+    }catch(err){setDocsMsg("❌ Error: "+(err.message||err));}
+  },[session,docsDB]);
 
   // ── marcar documentos como conciliados (para no reutilizarlos en la otra tarjeta) ──
   const dkey=d=>(d.tipo||"")+"|"+(d.ndoc||"")+"|"+(d.rut||"");
@@ -2272,7 +2302,9 @@ function App(){
         e("div",{style:{fontSize:12,color:C.muted,marginTop:3}},`${docsDB.length} documentos cargados${nConc?` · ${nConc} conciliados`:''}${docsName?' · '+docsName:' (base embebida)'}`)),
       canEdit&&nConc>0&&e("button",{className:"btnh",onClick:resetConciliados,style:btnSec},"↺ Reiniciar conciliados")),
     canEdit
-      ?e("div",{style:{marginBottom:12}},dz("dz-g",dragDocs,setDragDocs,loadDocs,docsRef,"Cargar Excel Manager","Arrastra o haz clic · .xlsx .xls .csv · reemplaza el listado en la nube"))
+      ?e("div",{style:{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap"}},
+        e("div",{style:{flex:"1 1 280px"}},dz("dz-g",dragDocs,setDragDocs,loadDocs,docsRef,"↻ Reemplazar listado","Sustituye TODA la base · .xlsx .xls .csv")),
+        e("div",{style:{flex:"1 1 280px"}},dz("",dragDocsAdd,setDragDocsAdd,appendDocs,docsAddRef,"➕ Agregar documentos","Complementa la base actual, sin borrarla · .xlsx .xls .csv")))
       :sb&&e("div",{style:{marginBottom:12,padding:"12px 14px",background:C.surf,border:"1px dashed "+C.border,borderRadius:10,fontSize:13,color:C.muted}},"🔒 Inicia sesión para cargar/reemplazar el listado Manager. (Solo lectura)"),
     docsMsg&&e("div",{style:{marginBottom:12,fontSize:13,color:docsMsg[0]==="✅"?C.green:C.red}},docsMsg),
     e("input",{value:searchD,onChange:ev=>setSearchD(ev.target.value),placeholder:"🔍 Buscar por razón social, RUT o N° Doc…",
