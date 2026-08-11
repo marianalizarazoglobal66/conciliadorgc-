@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v12 · 2026-07-09";  // sello de build para verificar despliegue
+const APP_VER="v13 · 2026-07-14";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1040,7 +1040,7 @@ const matchProv=(desc,tercero,provs)=>{
   return bp;
 };
 
-// ══ CANDIDATOS DE DOCUMENTO (RUT exacto + ventana ±10 días) ═══════════════════
+// ══ CANDIDATOS DE DOCUMENTO (RUT exacto + ventana ±5 días) ════════════════════
 function getDocCandidates(tx,provMatch,docsDB){
   if(!provMatch)return[];
   const txDate=parseDate(tx.fecha);
@@ -1051,12 +1051,12 @@ function getDocCandidates(tx,provMatch,docsDB){
     else return false; // sin RUT del proveedor no se asignan documentos (RUT es obligatorio)
     const dd=parseDate(doc.fecha);
     if(isNaN(dd)||isNaN(txDate))return false;
-    return Math.abs((txDate-dd)/864e5)<=10;
+    return Math.abs((txDate-dd)/864e5)<=5;
   }).map(doc=>{
     const dd=parseDate(doc.fecha);
     const daysDiff=Math.abs((txDate-dd)/864e5);
     const pct=doc.total>0?Math.abs(txAmt-doc.total)/Math.max(txAmt,doc.total):1;
-    const score=pct*0.7+(daysDiff/10)*0.3;
+    const score=pct*0.7+(daysDiff/5)*0.3;
     return {...doc,_score:score,_pct:pct,_days:daysDiff};
   }).sort((a,b)=>a._score-b._score);
 }
@@ -1113,7 +1113,7 @@ function assignDocs(txs,provs,docsDB){
   docsDB.forEach(d=>{if(d.conciliado)usedDoc.add(dk(d));});
   const sameMonth=(a,b)=>!isNaN(a)&&!isNaN(b)&&a.getMonth()===b.getMonth()&&a.getFullYear()===b.getFullYear();
   const sameDay=(a,b)=>sameMonth(a,b)&&a.getDate()===b.getDate();
-  const NEAR=20;                                  // ventana de fecha doc↔movimiento (días)
+  const NEAR=5;                                   // ventana de fecha doc↔movimiento: exacta + ±5 días
   const within=(a,b,days)=>isNaN(a)||isNaN(b)||Math.abs((a-b)/864e5)<=days;  // tolera fechas inválidas
 
   // ── COSTO TIPO DE CAMBIO — sin proveedor; su monto va a la columna Diferencia ──
@@ -1262,7 +1262,7 @@ function assignDocs(txs,provs,docsDB){
     // documentos para no reintroducir el caso de un único documento lejano (ej. HSP 26 días).
     for(const i of idxs){
       if(!tUnused(i))continue; const amt=txs[i].debito||0; if(!(amt>0))continue; const td=parseDate(txs[i].fecha);
-      const prev=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);if(isNaN(dd)||isNaN(td))return false;const dias=(td-dd)/864e5;return dias>NEAR&&dias<=50;});
+      const prev=allDocs.filter(dUnused).filter(d=>{const dd=parseDate(d.fecha);if(isNaN(dd)||isNaN(td))return false;const dias=(td-dd)/864e5;return dias>20&&dias<=50;});
       if(prev.length<2)continue;
       const sub=subsetSum(prev.map(d=>({amt:d.total,ref:d})),amt,2,8,SUM_BAND);
       if(sub)assignMulti(i,sub.map(o=>o.ref));
@@ -1275,7 +1275,8 @@ function assignDocs(txs,provs,docsDB){
       if(!tUnused(i))continue; const amt=txs[i].debito||0; const td=parseDate(txs[i].fecha);
       const cands=allDocs.filter(dUnused).filter(d=>within(parseDate(d.fecha),td,NEAR));
       if(!cands.length)continue;
-      cands.sort((a,b)=>Math.abs(a.total-amt)-Math.abs(b.total-amt));
+      // prioriza fecha exacta / más cercana; a igualdad de fecha, el monto más cercano
+      cands.sort((a,b)=>{const da=Math.abs((parseDate(a.fecha)-td)/864e5)||0,db=Math.abs((parseDate(b.fecha)-td)/864e5)||0;return da!==db?da-db:Math.abs(a.total-amt)-Math.abs(b.total-amt);});
       const doc=cands[0];
       const obs=doc.total>0&&Math.abs(amt-doc.total)/doc.total>0.03?"Diferencia con documento":"";
       result[i]={...doc,_diffAmt:amt-doc.total,_obs:obs};usedDoc.add(dk(doc));
@@ -1285,8 +1286,8 @@ function assignDocs(txs,provs,docsDB){
   // ── 5) MATCH INVERSO POR MONTO — cualquier egreso que quedó SIN documento ──
   // Cubre nombres genéricos/pasarelas que no identifican proveedor, y también cuando el
   // proveedor identificado fue erróneo (ej. "E-commerce..." → keyword "merce") y no trajo doc.
-  // Busca un documento NO usado cuyo VALOR coincida (mismo mes / ±10 días) y toma el proveedor
-  // desde ese documento (reemplaza el nombre mostrado).
+  // Busca un documento NO usado cuyo VALOR coincida y cuya FECHA CONTABLE sea EXACTAMENTE la del
+  // movimiento (regla estricta para evitar asignar por monto documentos de proveedores no relacionados).
   const AMT_BAND=0.01; // coincidencia de valor: exacto (±1% o $100)
   // un proveedor "tiene documentos" si existe algún doc con su RUT (cualquier mes)
   const provTieneDoc=p=>p&&p.rut&&docsDB.some(d=>normRut(d.rut)===normRut(p.rut));
@@ -1306,7 +1307,7 @@ function assignDocs(txs,provs,docsDB){
     for(const doc of docsDB){
       if(!(doc.total>0)||usedDoc.has(dk(doc)))continue;
       const dd=parseDate(doc.fecha);
-      if(!within(dd,td,NEAR))continue;
+      if(!sameDay(dd,td))continue;                 // POR MONTO: la fecha contable debe ser EXACTA a la del movimiento
       const diff=Math.abs(doc.total-amt);
       if(diff>Math.max(100,amt*AMT_BAND))continue;
       const score=nameScore(tw,amtWords(doc.razon));
