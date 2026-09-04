@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v14 · 2026-07-14";  // sello de build para verificar despliegue
+const APP_VER="v15 · 2026-07-14";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -2410,7 +2410,7 @@ function App(){
   }
 
   return e("div",null,watermark,header,loginModal,
-    e("div",{style:{position:"relative",zIndex:1,maxWidth:1400,margin:"0 auto",padding:20}},
+    e("div",{style:{position:"relative",zIndex:1,maxWidth:"min(1850px, 96vw)",margin:"0 auto",padding:20}},
       tabsRow,
       dbMsg&&e("div",{style:{fontSize:11.5,color:C.muted,marginBottom:12,padding:"6px 10px",background:C.surf,border:"1px solid "+C.border,borderRadius:7,display:"inline-block"}},dbMsg),
       tab==="cruce"?tabCruce:tab==="proveedores"?tabProv:tabDocs));
