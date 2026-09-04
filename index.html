@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v13 · 2026-07-14";  // sello de build para verificar despliegue
+const APP_VER="v14 · 2026-07-14";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1833,13 +1833,24 @@ function App(){
     if(!sb)return;
     sb.auth.getSession().then(({data})=>setSession(data&&data.session));
     const {data:authSub}=sb.auth.onAuthStateChange((_e,s)=>setSession(s));
+    // Supabase devuelve máx. 1000 filas por consulta → paginar para traer TODO
+    const fetchAll=async(table,cols)=>{
+      const all=[];const size=1000;let from=0;
+      for(;;){
+        const {data,error}=await sb.from(table).select(cols).order("id").range(from,from+size-1);
+        if(error)throw error;
+        if(!data||!data.length)break;
+        all.push(...data);
+        if(data.length<size)break;
+        from+=size;
+      }
+      return all;
+    };
     (async()=>{
       try{
-        const {data:pv,error:pe}=await sb.from("proveedores").select("id,nombre,rut,kw").order("id");
-        if(pe)throw pe;
+        const pv=await fetchAll("proveedores","id,nombre,rut,kw");
         if(pv&&pv.length)setProvs(pv);
-        const {data:dc,error:de}=await sb.from("documentos_manager").select("tipo,ndoc,rut,razon,fecha,total,codigo,descripcion,centro_costo,conciliado");
-        if(de)throw de;
+        const dc=await fetchAll("documentos_manager","id,tipo,ndoc,rut,razon,fecha,total,codigo,descripcion,centro_costo,conciliado");
         if(dc)setDocsDB(dc.map(d=>({...d,centroCosto:d.centro_costo||"",conciliado:!!d.conciliado})));
         setDbMsg("☁ Conectado a la nube.");
       }catch(err){setDbMsg("⚠ Sin conexión a la nube — usando datos locales. ("+(err.message||err)+")");}
@@ -1989,6 +2000,10 @@ function App(){
       const out=provs.slice();
       const byRut=new Map();out.forEach((p,i)=>{if(p.rut)byRut.set(normRut(p.rut),i);});
       let maxId=out.reduce((m,p)=>Math.max(m,p.id||0),0);
+      if(sb&&session){  // usar el id máximo REAL de la nube (evita choques con >1000 proveedores)
+        const {data:mx}=await sb.from("proveedores").select("id").order("id",{ascending:false}).limit(1);
+        if(mx&&mx.length)maxId=Math.max(maxId,mx[0].id||0);
+      }
       const touched=[];let added=0,upd=0;
       for(const r of rows){
         const kw=r.kw||autoKw(r.nombre);
@@ -2024,10 +2039,18 @@ function App(){
         if(sb&&session){const r=await sb.from("proveedores").update({...upd,updated_at:new Date().toISOString()}).eq("id",editP.id);if(r.error)throw r.error;}
         setProvs(provs.map(p=>p.id===editP.id?{...p,...upd}:p));
       }else{
-        const maxId=provs.reduce((m,p)=>Math.max(m,p.id||0),0);
-        const np={id:maxId+1,nombre:form.nombre.trim(),rut:form.rut.trim(),kw};
-        if(sb&&session){const r=await sb.from("proveedores").insert(np);if(r.error)throw r.error;}
-        setProvs([...provs,np]);
+        let newId=provs.reduce((m,p)=>Math.max(m,p.id||0),0)+1;
+        if(sb&&session){
+          // usar el id máximo REAL de la nube (evita choques cuando hay >1000 proveedores)
+          const {data:mx}=await sb.from("proveedores").select("id").order("id",{ascending:false}).limit(1);
+          if(mx&&mx.length)newId=Math.max(newId,(mx[0].id||0)+1);
+          const np={id:newId,nombre:form.nombre.trim(),rut:form.rut.trim(),kw};
+          const r=await sb.from("proveedores").insert(np);if(r.error)throw r.error;
+          setProvs([...provs,np]);
+        }else{
+          const np={id:newId,nombre:form.nombre.trim(),rut:form.rut.trim(),kw};
+          setProvs([...provs,np]);
+        }
       }
       setProvMsg("");setShowForm(false);
     }catch(err){setProvMsg("❌ "+(err.message||err));}
@@ -2283,7 +2306,7 @@ function App(){
       e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:13}},
         e("thead",null,e("tr",null,["#","Nombre","RUT","Keywords","Acciones"].map((hh,j)=>
           e("th",{key:j,style:{background:C.surf2,color:C.acL,padding:"9px 10px",textAlign:"left",borderBottom:"1px solid "+C.border,position:"sticky",top:0,fontSize:11,fontWeight:700}},hh)))),
-        e("tbody",null,filtProv.slice(0,500).map(p=>e("tr",{key:p.id,className:"pr"},
+        e("tbody",null,filtProv.slice(0,1500).map(p=>e("tr",{key:p.id,className:"pr"},
           e("td",{style:tdP(C.muted)},p.id),
           e("td",{style:tdP()},p.nombre),
           e("td",{style:tdP(C.muted)},p.rut),
@@ -2292,7 +2315,7 @@ function App(){
           e("td",{style:tdP()},
             canEdit?e("button",{onClick:()=>openEdit(p),title:"Editar",style:iconBtn},"✏"):null,
             canEdit?e("button",{onClick:()=>delProv(p.id),title:"Eliminar",style:{...iconBtn,color:C.red}},"🗑"):(sb?e("span",{style:{color:C.muted,fontSize:11}},"—"):null)))))),
-      filtProv.length>500&&e("div",{style:{padding:10,fontSize:12,color:C.muted,textAlign:"center"}},"Mostrando primeros 500 · refina la búsqueda")));
+      filtProv.length>1500&&e("div",{style:{padding:10,fontSize:12,color:C.muted,textAlign:"center"}},"Mostrando primeros 1500 · refina la búsqueda")));
 
   // ════════ TAB DOCS ════════
   const nConc=docsDB.filter(d=>d.conciliado).length;
