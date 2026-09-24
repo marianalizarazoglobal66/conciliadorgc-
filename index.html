@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v15 · 2026-07-14";  // sello de build para verificar despliegue
+const APP_VER="v16 · 2026-09-24";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1437,9 +1437,13 @@ function parseProvsXlsx(data){
 }
 
 // ══ EXPORT EXCEL (.xls vía HTML con namespace) ════════════════════════════════
-const xlsHead='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Hoja1</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>';
-function downloadXls(html,filename){
-  const blob=new Blob(['﻿'+xlsHead+html+'</body></html>'],{type:"application/vnd.ms-excel"});
+const xlsHeadFor=names=>'<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>'+names.map(n=>'<x:ExcelWorksheet><x:Name>'+n+'</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>').join('')+'</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>';
+// content: string (1 hoja "Hoja1") o [{name, html}, ...] (varias hojas → cada <table> es una hoja)
+function downloadXls(content,filename){
+  const sheets=typeof content==="string"?[{name:"Hoja1",html:content}]:content;
+  const head=xlsHeadFor(sheets.map(s=>s.name));
+  const body=sheets.map(s=>s.html).join('');
+  const blob=new Blob(['﻿'+head+body+'</body></html>'],{type:"application/vnd.ms-excel"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;
   document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),2000);
 }
@@ -1539,7 +1543,29 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
     });
   });
   h+='</table>';
-  downloadXls(h,`Movimientos_Tarjeta_${(periodo||"periodo").replace(/[^\w]+/g,"_")}.xls`);
+  // ── Hoja "Resumen Semanal": suma de débitos por semana (ISO, lunes→domingo), excluye reversados y excluidas ──
+  const isoWeek=d=>{const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=(t.getUTCDay()+6)%7;t.setUTCDate(t.getUTCDate()-day+3);const fth=new Date(Date.UTC(t.getUTCFullYear(),0,4));const fd=(fth.getUTCDay()+6)%7;fth.setUTCDate(fth.getUTCDate()-fd+3);return 1+Math.round((t-fth)/6048e5);};
+  const weeks=new Map();
+  txs.forEach((r,i)=>{
+    if(isExcluded(r)||isReversado(assignments[i],edits,String(i)))return;   // fuera reversados y excluidas
+    const deb=r.debito||0; if(!(deb>0))return;
+    const d=parseDate(r.fecha); if(isNaN(d))return;
+    const dow=(d.getDay()+6)%7; const mon=new Date(d); mon.setHours(0,0,0,0); mon.setDate(d.getDate()-dow);
+    const key=mon.getTime();
+    if(!weeks.has(key)){const sun=new Date(mon);sun.setDate(mon.getDate()+6);weeks.set(key,{nro:isoWeek(mon),desde:mon,hasta:sun,total:0});}
+    weeks.get(key).total+=deb;
+  });
+  const wkList=[...weeks.values()].sort((a,b)=>a.desde-b.desde);
+  const granTotal=wkList.reduce((s,w)=>s+w.total,0);
+  const thw=t=>`<td style="background:#1F6FEB;color:#fff;font-weight:bold;padding:6px;text-align:center">${t}</td>`;
+  const tdw=(v,al)=>`<td style="padding:5px 8px;text-align:${al||'left'}">${esc(v)}</td>`;
+  let wk='<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial;font-size:12px">';
+  wk+=`<tr><td colspan="4" style="background:#0D1117;color:#fff;font-size:15px;font-weight:bold;padding:8px">GASTO SEMANAL GCARD — ${esc(periodo||"PERÍODO")}</td></tr>`;
+  wk+='<tr>'+thw('NRO SEMANA')+thw('DESDE')+thw('HASTA')+thw('TOTAL GASTADO GCARD')+'</tr>';
+  wkList.forEach(w=>{wk+='<tr>'+tdw(w.nro,'center')+tdw(fmtDate(w.desde),'center')+tdw(fmtDate(w.hasta),'center')+tdw("$"+fmtCLP(w.total),'right')+'</tr>';});
+  wk+='<tr><td></td><td></td><td style="text-align:right;font-weight:bold;padding:6px 8px">TOTAL</td><td style="text-align:right;font-weight:bold;padding:6px 8px;background:#EAF0FB">$'+fmtCLP(granTotal)+'</td></tr>';
+  wk+='</table>';
+  downloadXls([{name:"Movimientos",html:h},{name:"Resumen Semanal",html:wk}],`Movimientos_Tarjeta_${(periodo||"periodo").replace(/[^\w]+/g,"_")}.xls`);
 }
 function exportProvXLSX(provs){
   const today=fmtDate(new Date()).replace(/\//g,"-");
