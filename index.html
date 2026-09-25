@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v17 · 2026-09-25";  // sello de build para verificar despliegue
+const APP_VER="v18 · 2026-09-25";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1454,6 +1454,8 @@ const editVal=(edits,key,field,base)=>(edits&&edits[key]&&edits[key][field]!==un
 const hasEdit=(edits,key,field)=>!!(edits&&edits[key]&&edits[key][field]!==undefined);
 // ¿la línea sigue siendo reversado? (se puede quitar manualmente con _unrev en las ediciones)
 const isReversado=(d,edits,ki)=>!!(d&&d._reversado)&&!(edits&&edits[ki]&&edits[ki]._unrev);
+// ¿la línea sigue excluida? (se puede incluir manualmente con _unexcl para asociarle nota de crédito/documento)
+const isExcludedEff=(r,edits,ki)=>isExcluded(r)&&!(edits&&edits[ki]&&edits[ki]._unexcl);
 
 // slots de documento de una línea de cobro: principal + extras del motor (multi) + extras manuales
 function docSlots(i,d,extraDocs){
@@ -1497,7 +1499,7 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
   const th=(t,c)=>`<td style="background:${c};color:#fff;font-weight:bold;padding:5px">${t}</td>`;
   h+='<tr>'+th('Fecha','#1F6FEB')+th('Tipo Transacción','#1F6FEB')+th('Nombre Tercero','#1F6FEB')+th('Tar.','#1F6FEB')+th('Débito','#1F6FEB')+th('Abono','#1F6FEB')+th('Proveedor','#1F6FEB')+th('RUT','#1F6FEB')+th('Manager','#1A7F37')+th('Cod. Servicio','#1A7F37')+th('Centro Costo','#1A7F37')+th('N° Doc','#1A7F37')+th('Fecha Doc','#1A7F37')+th('Total Doc','#1A7F37')+th('Diferencia','#1A7F37')+th('Observaciones','#1A7F37')+'</tr>';
   txs.forEach((r,i)=>{
-    const excl=isExcluded(r);
+    const excl=isExcludedEff(r,edits,String(i));
     const p=excl?null:provMatches[i];
     const d=assignments[i];
     const rev=isReversado(d,edits,String(i));
@@ -1549,7 +1551,7 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
   const fmtUTC=dt=>String(dt.getUTCDate()).padStart(2,"0")+"/"+String(dt.getUTCMonth()+1).padStart(2,"0")+"/"+dt.getUTCFullYear();
   const weeks=new Map();
   txs.forEach((r,i)=>{
-    if(isExcluded(r)||isReversado(assignments[i],edits,String(i)))return;   // fuera reversados y excluidas
+    if(isExcludedEff(r,edits,String(i))||isReversado(assignments[i],edits,String(i)))return;   // fuera reversados y excluidas
     const deb=r.debito||0; if(!(deb>0))return;
     const d=parseDate(r.fecha); if(isNaN(d))return;
     const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));   // medianoche UTC del día del movimiento
@@ -1599,7 +1601,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
   //    Incluye líneas sin match donde se ingresó un N° Doc a mano (datos tomados del listado Manager).
   const seen=new Set(); const docsRows=[];
   txs.forEach((r,i)=>{
-    if(isExcluded(r))return; const d=assignments[i]; if(d&&d._costoTC)return; if(isReversado(d,edits,String(i)))return;
+    if(isExcludedEff(r,edits,String(i)))return; const d=assignments[i]; if(d&&d._costoTC)return; if(isReversado(d,edits,String(i)))return;
     const p=provMatches[i];
     const list=(d&&!d._reversado)?((d._multi&&d._docs&&d._docs.length)?d._docs:[d]):[{}];  // reversado incluido a mano o sin match → entrada manual
     list.forEach((doc,li)=>{
@@ -1627,7 +1629,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
   });
   // 2) Suma de la columna Diferencia (misma que el Excel de movimientos) — con ediciones
   let totalDiff=0;
-  txs.forEach((r,i)=>{if(isExcluded(r))return; const d=assignments[i]; if(isReversado(d,edits,String(i)))return;
+  txs.forEach((r,i)=>{if(isExcludedEff(r,edits,String(i)))return; const d=assignments[i]; if(isReversado(d,edits,String(i)))return;
     const base=lineDiffBase(edits,extraDocs,i,r,(d&&!d._reversado)?d:null);
     const ev=editVal(edits,String(i),"diff",base); const n=ev===""||ev==null?0:Number(ev);
     if(!isNaN(n))totalDiff+=n;});
@@ -1635,7 +1637,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
   const docRuts=new Set(docsRows.map(x=>normRut(x.rut)));
   const sinDoc=new Map();
   txs.forEach((r,i)=>{
-    if(isExcluded(r))return; const d=assignments[i]; const p=provMatches[i];
+    if(isExcludedEff(r,edits,String(i)))return; const d=assignments[i]; const p=provMatches[i];
     if(p&&!d&&p.rut&&!docRuts.has(normRut(p.rut))&&!sinDoc.has(normRut(p.rut)))sinDoc.set(normRut(p.rut),{nombre:p.nombre,rut:p.rut});
   });
 
@@ -1778,20 +1780,20 @@ function App(){
   // ── useMemo: mapa RUT→prov ────────────────────────────────────────────────
   const provMap=useMemo(()=>{const m=new Map();for(const p of provs)if(p.rut)m.set(normRut(p.rut),p);return m;},[provs]);
   // ── useMemo: match de proveedor por TX (una sola vez) ─────────────────────
-  const txProvMatches=useMemo(()=>txs.map(r=>(isExcluded(r)||isNoMatch(r))?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs]);
+  const txProvMatches=useMemo(()=>txs.map((r,i)=>(isExcludedEff(r,edits,String(i))||isNoMatch(r))?null:matchProv(r.tipo,r.tercero,provs)),[txs,provs,edits]);
   // ── ¿la línea tiene documento efectivo? (motor + docs manuales agregados) ──
   const lineHasDoc=useCallback(i=>{
     const d=assignments[i];
-    if(isReversado(d,edits,String(i)))return false;
+    if(isReversado(d,edits,String(i))||isExcludedEff(txs[i],edits,String(i)))return false;
     const dd=(d&&!d._reversado)?d:null;
     return docSlots(i,dd,extraDocs).some(s=>{const v=editVal(edits,s.lk,"ndoc",(s.base&&s.base.ndoc)||"");return v!==""&&v!=null;});
-  },[assignments,edits,extraDocs]);
-  const lineHasProv=useCallback(i=>{const d=assignments[i];if(isReversado(d,edits,String(i)))return false;return !!(txProvMatches[i]||(d&&d._byAmount));},[assignments,txProvMatches,edits]);
+  },[assignments,edits,extraDocs,txs]);
+  const lineHasProv=useCallback(i=>{const d=assignments[i];if(isReversado(d,edits,String(i))||isExcludedEff(txs[i],edits,String(i)))return false;return !!(txProvMatches[i]||(d&&d._byAmount));},[assignments,txProvMatches,edits,txs]);
   // ── useMemo: estadísticas (consideran las asociaciones manuales) ──────────
   const {matchCount,docCount,exclCount,idCount,noIdCount}=useMemo(()=>{
     let m=0,dc=0,ex=0,idc=0,ni=0;
     txs.forEach((r,i)=>{
-      if(isExcluded(r)){ex++;return;}
+      if(isExcludedEff(r,edits,String(i))){ex++;return;}
       if(isReversado(assignments[i],edits,String(i)))return;
       const hp=lineHasProv(i), hd=lineHasDoc(i);
       if(hp)m++; if(hd)dc++; if(hp||hd)idc++; else ni++;
@@ -1804,7 +1806,7 @@ function App(){
   const dupMap=useMemo(()=>{
     const m=new Map();
     txs.forEach((r,i)=>{
-      if(isExcluded(r))return; if(isReversado(assignments[i],edits,String(i)))return;
+      if(isExcludedEff(r,edits,String(i)))return; if(isReversado(assignments[i],edits,String(i)))return;
       const d=assignments[i], dd=(d&&!d._reversado)?d:null;
       docSlots(i,dd,extraDocs).forEach(s=>{const sd=slotDoc(edits,s);const nd=String(sd.ndoc||"").trim();if(!nd)return;
         const k=dupKey(nd,sd.rut);if(!m.has(k))m.set(k,[]);m.get(k).push({i,tercero:r.tercero,fecha:r.fecha});});
@@ -1986,7 +1988,7 @@ function App(){
     const edits=editsRef.current, extraDocs=extraRef.current;  // usar el estado más reciente
     const keys=new Set();const docs=[];
     txs.forEach((r,i)=>{const a=assignments[i];if(a&&a._costoTC)return;if(isReversado(a,edits,String(i)))return;
-      if(isExcluded(r))return;
+      if(isExcludedEff(r,edits,String(i)))return;
       const list=(a&&!a._reversado)?((a._multi&&a._docs)?a._docs:[a]):[{}];  // reversado incluido o sin match → doc manual
       list.forEach((d,li)=>{const lk=li===0?String(i):i+"_"+(li-1);
         const ev=edits&&edits[lk];
@@ -2183,8 +2185,11 @@ function App(){
             e("th",{key:j,style:{background:C.surf2,color:j>=8?C.teal:C.acL,padding:"9px 8px",textAlign:j===4||j===5||j===13||j===14?"right":"left",
               borderBottom:"1px solid "+C.border,fontSize:11,fontWeight:700,position:"sticky",top:0}},hh)))),
         e("tbody",null,txPage.flatMap(r=>{
-          const i=r._origIdx,p=r._prov,d=assignments[i],excl=isExcluded(r);
+          const i=r._origIdx,p=r._prov,d=assignments[i];
           const ki=String(i);
+          const rawExcl=isExcluded(r);               // detectada como excluida por el motor
+          const unexcl=!!(edits[ki]&&edits[ki]._unexcl); // el usuario la incluyó manualmente
+          const excl=rawExcl&&!unexcl;               // excluida efectiva
           const rawRev=d&&d._reversado;              // detectado como reversado por el motor
           const unrev=!!(edits[ki]&&edits[ki]._unrev); // el usuario lo incluyó manualmente
           const rev=rawRev&&!unrev;                  // reversado efectivo
@@ -2252,7 +2257,9 @@ function App(){
             e("td",{style:{padding:"6px 8px",borderBottom:"1px solid "+C.border,maxWidth:220}},
               rev?badge("↩ Reversado",C.red):excl?badge("⛔ Excluida",C.red):mDoc?badge(mDoc.razon||"—","rgba(63,185,80,.18)",C.green):(dd&&dd._byAmount)?e("span",{title:dd._amtNoName?"Asignado solo por monto — el nombre NO coincide con el comercio. Verifícalo.":"Asignado por coincidencia de monto"},badge((dd.razon||"?")+" · por monto"+(dd._amtNoName?" ⚠":""),dd._amtNoName?"rgba(210,153,34,.20)":"rgba(163,113,247,.18)",dd._amtNoName?C.yellow:C.purple)):p?badge(p.nombre,"rgba(63,185,80,.18)",C.green):(dd&&dd.razon?badge(dd.razon+" · por monto","rgba(163,113,247,.18)",C.purple):badge("Sin match","rgba(248,81,73,.18)",C.red)),
               rawRev?e("button",{onClick:()=>setEdit(ki,"_unrev",!unrev),title:unrev?"Volver a marcar como reversado":"Incluir esta línea (quitar reversado) para asociarle proveedor y documento",
-                style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unrev?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unrev?"↩ marcar reversado":"✎ incluir"):null),
+                style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unrev?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unrev?"↩ marcar reversado":"✎ incluir"):null,
+              rawExcl&&!rawRev?e("button",{onClick:()=>setEdit(ki,"_unexcl",!unexcl),title:unexcl?"Volver a excluir esta línea":"Incluir esta línea (quitar exclusión) para asociarle su nota de crédito / documento",
+                style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unexcl?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unexcl?"↩ excluir":"✎ incluir"):null),
             td(rutVal,"left",C.muted),
             e("td",{style:{padding:"5px 8px",textAlign:"center",borderBottom:"1px solid "+C.border,color:dd?null:C.muted}},
               mgr||"—",
