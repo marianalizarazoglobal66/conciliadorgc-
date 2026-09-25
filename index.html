@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v16 · 2026-09-24";  // sello de build para verificar despliegue
+const APP_VER="v17 · 2026-09-25";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1544,15 +1544,18 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
   });
   h+='</table>';
   // ── Hoja "Resumen Semanal": suma de débitos por semana (ISO, lunes→domingo), excluye reversados y excluidas ──
-  const isoWeek=d=>{const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));const day=(t.getUTCDay()+6)%7;t.setUTCDate(t.getUTCDate()-day+3);const fth=new Date(Date.UTC(t.getUTCFullYear(),0,4));const fd=(fth.getUTCDay()+6)%7;fth.setUTCDate(fth.getUTCDate()-fd+3);return 1+Math.round((t-fth)/6048e5);};
+  // Todo el cálculo de semana se hace en UTC para ser inmune al cambio de horario (DST) y a la zona horaria.
+  const isoWeekUTC=t=>{const x=new Date(t.getTime());const day=(x.getUTCDay()+6)%7;x.setUTCDate(x.getUTCDate()-day+3);const fth=new Date(Date.UTC(x.getUTCFullYear(),0,4));const fd=(fth.getUTCDay()+6)%7;fth.setUTCDate(fth.getUTCDate()-fd+3);return 1+Math.round((x-fth)/6048e5);};
+  const fmtUTC=dt=>String(dt.getUTCDate()).padStart(2,"0")+"/"+String(dt.getUTCMonth()+1).padStart(2,"0")+"/"+dt.getUTCFullYear();
   const weeks=new Map();
   txs.forEach((r,i)=>{
     if(isExcluded(r)||isReversado(assignments[i],edits,String(i)))return;   // fuera reversados y excluidas
     const deb=r.debito||0; if(!(deb>0))return;
     const d=parseDate(r.fecha); if(isNaN(d))return;
-    const dow=(d.getDay()+6)%7; const mon=new Date(d); mon.setHours(0,0,0,0); mon.setDate(d.getDate()-dow);
-    const key=mon.getTime();
-    if(!weeks.has(key)){const sun=new Date(mon);sun.setDate(mon.getDate()+6);weeks.set(key,{nro:isoWeek(mon),desde:mon,hasta:sun,total:0});}
+    const t=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));   // medianoche UTC del día del movimiento
+    const dow=(t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dow);         // lunes de esa semana (UTC)
+    const key=t.getTime();
+    if(!weeks.has(key)){const sun=new Date(t);sun.setUTCDate(t.getUTCDate()+6);weeks.set(key,{nro:isoWeekUTC(t),desde:new Date(t),hasta:sun,total:0});}
     weeks.get(key).total+=deb;
   });
   const wkList=[...weeks.values()].sort((a,b)=>a.desde-b.desde);
@@ -1562,7 +1565,7 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
   let wk='<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Segoe UI,Arial;font-size:12px">';
   wk+=`<tr><td colspan="4" style="background:#0D1117;color:#fff;font-size:15px;font-weight:bold;padding:8px">GASTO SEMANAL GCARD — ${esc(periodo||"PERÍODO")}</td></tr>`;
   wk+='<tr>'+thw('NRO SEMANA')+thw('DESDE')+thw('HASTA')+thw('TOTAL GASTADO GCARD')+'</tr>';
-  wkList.forEach(w=>{wk+='<tr>'+tdw(w.nro,'center')+tdw(fmtDate(w.desde),'center')+tdw(fmtDate(w.hasta),'center')+tdw("$"+fmtCLP(w.total),'right')+'</tr>';});
+  wkList.forEach(w=>{wk+='<tr>'+tdw(w.nro,'center')+tdw(fmtUTC(w.desde),'center')+tdw(fmtUTC(w.hasta),'center')+tdw("$"+fmtCLP(w.total),'right')+'</tr>';});
   wk+='<tr><td></td><td></td><td style="text-align:right;font-weight:bold;padding:6px 8px">TOTAL</td><td style="text-align:right;font-weight:bold;padding:6px 8px;background:#EAF0FB">$'+fmtCLP(granTotal)+'</td></tr>';
   wk+='</table>';
   downloadXls([{name:"Movimientos",html:h},{name:"Resumen Semanal",html:wk}],`Movimientos_Tarjeta_${(periodo||"periodo").replace(/[^\w]+/g,"_")}.xls`);
