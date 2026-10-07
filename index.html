@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v18 · 2026-09-25";  // sello de build para verificar despliegue
+const APP_VER="v19 · 2026-10-07";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1452,6 +1452,8 @@ const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").rep
 // presencia del campo = edición (un "" explícito SÍ sobrescribe, p.ej. doc no encontrado → vacío)
 const editVal=(edits,key,field,base)=>(edits&&edits[key]&&edits[key][field]!==undefined)?edits[key][field]:base;
 const hasEdit=(edits,key,field)=>!!(edits&&edits[key]&&edits[key][field]!==undefined);
+// RUT efectivo de un slot: edición manual del RUT > RUT del doc encontrado > RUT base (proveedor/doc del motor)
+const effRut=(edits,key,base)=>editVal(edits,key,"rut",(edits&&edits[key]&&edits[key]._doc)?edits[key]._doc.rut:(base||""));
 // ¿la línea sigue siendo reversado? (se puede quitar manualmente con _unrev en las ediciones)
 const isReversado=(d,edits,ki)=>!!(d&&d._reversado)&&!(edits&&edits[ki]&&edits[ki]._unrev);
 // ¿la línea sigue excluida? (se puede incluir manualmente con _unexcl para asociarle nota de crédito/documento)
@@ -1475,7 +1477,7 @@ function slotDoc(edits,slot){
     fecha:editVal(edits,lk,"fecha",b.fecha||""),
     total:editVal(edits,lk,"total",b.total!=null?b.total:""),
     tipo:(ev&&ev._doc)?ev._doc.tipo:(b.tipo||""),
-    rut:(ev&&ev._doc)?ev._doc.rut:(b.rut||""),
+    rut:effRut(edits,lk,b.rut),
     razon:(ev&&ev._doc)?ev._doc.razon:(b.razon||"")};
 }
 // diferencia base de la línea = débito − suma de los totales de TODOS sus documentos
@@ -1513,7 +1515,7 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
     const td=(v,al)=>`<td style="padding:4px;text-align:${al||'left'}">${esc(v)}</td>`;
     const mDoc=(edits&&edits[ki]&&edits[ki]._doc)?edits[ki]._doc:null; // doc asociado a mano
     const provTxt=rev?"REVERSADO":(excl?"EXCLUIDA":mDoc?(mDoc.razon||""):((dd&&dd._byAmount)?(dd.razon||"?")+" (por monto)":(p?p.nombre:(dd&&dd.razon?dd.razon+" (por monto)":"Sin match"))));
-    const rutTxt=rev?"":(mDoc?mDoc.rut:((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))));
+    const rutTxt=rev?"":effRut(edits,ki,(dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
     const docs=(dd&&dd._multi&&dd._docs&&dd._docs.length>1)?dd._docs:null;
     const d0=docs?docs[0]:dd;
     // valores con edición manual aplicada
@@ -1531,14 +1533,14 @@ function exportXLSX(txs,assignments,provMatches,periodo,edits,extraDocs){
     if(docs)for(let k=0;k<docs.length-1;k++){const dx=docs[k+1],ek=i+"_"+k;
       const xN=editVal(edits,ek,"ndoc",dx.ndoc||""),xF=editVal(edits,ek,"fecha",dx.fecha||""),xT=editVal(edits,ek,"total",dx.total||"");
       h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
-        td(p?p.nombre:(dd.razon||""))+td(rutTxt)+td("MULTI",'center')+
+        td(p?p.nombre:(dd.razon||""))+td(effRut(edits,ek,dx.rut))+td("MULTI",'center')+
         td(editVal(edits,ek,"codigo",dx.codigo||""))+td(editVal(edits,ek,"centroCosto",dx.centroCosto||""))+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
     }
     // documentos manuales adicionales de esta línea (info de cobro en blanco)
     ((extraDocs&&extraDocs[ki])||[]).forEach(id=>{const lk=ki+"_x"+id,ev=edits&&edits[lk];
       const xN=editVal(edits,lk,"ndoc","");if(!xN)return;
       const xF=editVal(edits,lk,"fecha",""),xT=editVal(edits,lk,"total","");
-      const razon=(ev&&ev._doc)?ev._doc.razon:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+      const razon=(ev&&ev._doc)?ev._doc.razon:"",rut=effRut(edits,lk,"");
       h+=`<tr style="background:${bg}">`+td("")+td("")+td("")+td("",'center')+td("",'right')+td("",'right')+
         td(razon)+td(rut)+td("SI",'center')+
         td(editVal(edits,lk,"codigo",""))+td(editVal(edits,lk,"centroCosto",""))+td(xN)+td(xF?fmtDate(xF):"")+td(money(xT),'right')+td("")+td("")+'</tr>';
@@ -1611,7 +1613,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
       const eF=editVal(edits,lk,"fecha",doc.fecha||""), eT=editVal(edits,lk,"total",doc.total||0);
       const eCod=editVal(edits,lk,"codigo",doc.codigo||""), eCen=editVal(edits,lk,"centroCosto",doc.centroCosto||"");
       const tipo=(ev&&ev._doc)?ev._doc.tipo:(doc.tipo||"");
-      const rut=(ev&&ev._doc)?ev._doc.rut:(doc.rut||"");
+      const rut=effRut(edits,lk,doc.rut);
       const razon=(ev&&ev._doc)?ev._doc.razon:(doc.razon||"");
       const k=(tipo||"")+"|"+eN+"|"+(rut||""); if(seen.has(k))return; seen.add(k);
       docsRows.push({rut:rut||"",prov:(p&&p.nombre)?p.nombre:(razon||""),codigo:eCod,
@@ -1621,7 +1623,7 @@ function exportCargaMasiva(txs,assignments,provMatches,periodo,cierre,edits,extr
     ((extraDocs&&extraDocs[String(i)])||[]).forEach(id=>{
       const lk=String(i)+"_x"+id,ev=edits&&edits[lk];
       const eN=editVal(edits,lk,"ndoc","");if(!eN)return;
-      const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=(ev&&ev._doc)?ev._doc.rut:"",razon=(ev&&ev._doc)?ev._doc.razon:"";
+      const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=effRut(edits,lk,""),razon=(ev&&ev._doc)?ev._doc.razon:"";
       const k=(tipo||"")+"|"+eN+"|"+(rut||"");if(seen.has(k))return;seen.add(k);
       docsRows.push({rut:rut||"",prov:(p&&p.nombre)?p.nombre:(razon||""),codigo:editVal(edits,lk,"codigo",""),
         centro:editVal(edits,lk,"centroCosto",""),tipo:tipo,ndoc:eN,fecha:editVal(edits,lk,"fecha",""),total:editVal(edits,lk,"total",0)||0});
@@ -1736,16 +1738,30 @@ function App(){
   };
   const applyNdocEdit=(key,raw,expectedRut)=>{
     const typed=String(raw||"").trim();
-    const found=findDoc(typed,expectedRut);
     const p=editsRef.current;const cur={...(p[key]||{})};
+    // si el usuario editó el RUT de la línea, ese RUT manda para la búsqueda (caso Mercado Libre)
+    const filt=(cur.rut!==undefined&&cur.rut!=="")?cur.rut:expectedRut;
+    const found=findDoc(typed,filt);
     if(found){
       cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";
-      cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");
+      cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");cur.rut=found.rut||"";
       cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;
     }else{
       cur.ndoc=typed;cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;
     }
     // la diferencia ahora es derivada (débito − suma de docs); no se fija aquí
+    commitEdits({...p,[key]:cur});
+  };
+  // editar el RUT de una línea/slot: se guarda y, si ya hay N° Doc, vuelve a buscar el documento con ese RUT
+  const applyRutEdit=(key,rawRut,baseNdoc)=>{
+    const rut=String(rawRut||"").trim();
+    const p=editsRef.current;const cur={...(p[key]||{})};cur.rut=rut;
+    const nd=String(cur.ndoc!==undefined?cur.ndoc:(baseNdoc||"")).trim();
+    if(nd){
+      const found=findDoc(nd,rut);
+      if(found){cur.ndoc=found.ndoc||"";cur.codigo=found.codigo||"";cur.centroCosto=found.centroCosto||"";cur.fecha=found.fecha||"";cur.total=(found.total!=null?found.total:"");cur.rut=found.rut||rut;cur._doc={tipo:found.tipo||"",rut:found.rut||"",razon:found.razon||""};cur._found=true;}
+      else{cur.codigo="";cur.centroCosto="";cur.fecha="";cur.total="";cur._doc=null;cur._found=false;}  // conserva N° Doc y RUT escritos
+    }
     commitEdits({...p,[key]:cur});
   };
   const [tab,setTab]=useState("cruce");
@@ -1788,7 +1804,9 @@ function App(){
     const dd=(d&&!d._reversado)?d:null;
     return docSlots(i,dd,extraDocs).some(s=>{const v=editVal(edits,s.lk,"ndoc",(s.base&&s.base.ndoc)||"");return v!==""&&v!=null;});
   },[assignments,edits,extraDocs,txs]);
-  const lineHasProv=useCallback(i=>{const d=assignments[i];if(isReversado(d,edits,String(i))||isExcludedEff(txs[i],edits,String(i)))return false;return !!(txProvMatches[i]||(d&&d._byAmount));},[assignments,txProvMatches,edits,txs]);
+  const lineHasProv=useCallback(i=>{const d=assignments[i],ki=String(i);if(isReversado(d,edits,ki)||isExcludedEff(txs[i],edits,ki))return false;
+    if(edits[ki]&&edits[ki]._doc)return true;              // doc Manager asociado a mano → proveedor identificado
+    return !!(txProvMatches[i]||(d&&d._byAmount));},[assignments,txProvMatches,edits,txs]);
   // ── useMemo: estadísticas (consideran las asociaciones manuales) ──────────
   const {matchCount,docCount,exclCount,idCount,noIdCount}=useMemo(()=>{
     let m=0,dc=0,ex=0,idc=0,ni=0;
@@ -1994,13 +2012,13 @@ function App(){
         const ev=edits&&edits[lk];
         const eN=editVal(edits,lk,"ndoc",d.ndoc||"");
         const tipo=(ev&&ev._doc)?ev._doc.tipo:(d.tipo||"");
-        const rut=(ev&&ev._doc)?ev._doc.rut:(d.rut||"");
+        const rut=effRut(edits,lk,d.rut);
         const doc={...d,tipo,rut,ndoc:eN};const k=dkey(doc);
         if(eN&&!keys.has(k)){keys.add(k);docs.push(doc);}});
       // documentos manuales adicionales de esta línea
       ((extraDocs&&extraDocs[String(i)])||[]).forEach(id=>{const lk=String(i)+"_x"+id;const ev=edits&&edits[lk];
         const eN=editVal(edits,lk,"ndoc","");if(!eN)return;
-        const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+        const tipo=(ev&&ev._doc)?ev._doc.tipo:"",rut=effRut(edits,lk,"");
         const doc={tipo,rut,ndoc:eN};const k=dkey(doc);
         if(!keys.has(k)){keys.add(k);docs.push(doc);}});});
     if(!docs.length){setEcMsg("No hay documentos asociados para marcar.");return;}
@@ -2200,7 +2218,7 @@ function App(){
           const td=(ch,al,col)=>e("td",{style:{padding:"7px 8px",textAlign:al||"left",color:col||C.text,borderBottom:"1px solid "+C.border,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis"}},ch);
           const mDoc=(edits[ki]&&edits[ki]._doc)?edits[ki]._doc:null; // documento asociado a mano (encontrado en Manager)
           const provName=mDoc?mDoc.razon:(p?p.nombre:(dd&&dd.razon?dd.razon:""));
-          const rutVal=rev?"":(mDoc?mDoc.rut:((dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:""))));
+          const rutVal=rev?"":effRut(edits,ki,(dd&&dd._byAmount)?dd.rut:(p?p.rut:(dd?dd.rut:"")));
           // RUT para filtrar la búsqueda manual: solo el confiable (match por nombre/RUT o doc del motor),
           // NUNCA el adivinado por monto — así una línea "por monto" errónea se puede corregir a mano.
           const filterRut=p?(p.rut||""):((dd&&!dd._byAmount)?(dd.rut||""):"");
@@ -2214,7 +2232,7 @@ function App(){
           if(!dd&&!excl&&!rev&&mainNdoc)mgr=badge("Sí",C.teal,C.bg);
           const baseDiff=lineDiffBase(edits,extraDocs,i,r,dd);  // débito − suma de docs de la línea
           // RUT efectivo de un slot + alerta de documento repetido
-          const slotRut=(lk,base)=>{const ev=edits&&edits[lk];return (ev&&ev._doc)?ev._doc.rut:((base&&base.rut)||"");};
+          const slotRut=(lk,base)=>effRut(edits,lk,base&&base.rut);
           const dupWarn=(nd,rut)=>{if(!nd)return null;const arr=dupMap.get(dupKey(nd,rut));if(!arr||arr.length<2)return null;
             const locs=[...new Set(arr.map(x=>(x.tercero||"?")+" ("+fmtDate(x.fecha)+")"))];
             return "⚠ Este documento ya está registrado en "+arr.length+" líneas: "+locs.join(" · ");};
@@ -2229,16 +2247,20 @@ function App(){
                   else setEdit(key,field,type==="num"?(raw.trim()===""?"":numCLP(raw)):raw);},
                 style:{textAlign:al||"left",color:warn?C.red:(col||C.text),fontWeight:warn?700:undefined}}));
           };
+          // celda de RUT editable: al escribir un RUT, se usa para buscar el documento (caso Mercado Libre)
+          const edRut=(key,effVal,baseNdoc)=>e("td",{style:{padding:"3px 4px",borderBottom:"1px solid "+C.border,maxWidth:130}},
+            e("input",{className:"ec-edit",defaultValue:effVal||"",key:key+"|rut|"+(effVal||""),title:"RUT editable — se usa para buscar el documento",
+              onBlur:ev=>applyRutEdit(key,ev.target.value,baseNdoc),style:{textAlign:"left",color:C.muted}}));
           // fila de documento manual adicional (info de cobro de la tarjeta en blanco)
           const manualDocRow=id=>{const lk=ki+"_x"+id,ev=edits&&edits[lk];
-            const razon=(ev&&ev._doc)?ev._doc.razon:"",rut=(ev&&ev._doc)?ev._doc.rut:"";
+            const razon=(ev&&ev._doc)?ev._doc.razon:"";
             return e("tr",{key:lk,className:rowClass},
               e("td",{style:{padding:"3px 6px",borderBottom:"1px solid "+C.border,textAlign:"center"}},
                 e("button",{onClick:()=>removeDocLine(ki,id),title:"Quitar este documento",style:{...iconBtn,color:C.red,marginRight:0}},"🗑")),
               e("td",{style:{padding:"7px 8px",borderBottom:"1px solid "+C.border}},""),
               td("","left"),td("","center"),td("","right"),td("","right"),
               td(razon?badge(razon,"rgba(56,139,253,.16)",C.acL):"","left"),
-              td(rut||"","left",C.muted),
+              edRut(lk,effRut(edits,lk,""),""),
               td((ev&&ev._found)?badge("Sí",C.teal,C.bg):"—","center",C.muted),
               td(editVal(edits,lk,"codigo",""),"left",C.muted),
               td(editVal(edits,lk,"centroCosto",""),"left",C.muted),
@@ -2260,7 +2282,7 @@ function App(){
                 style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unrev?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unrev?"↩ marcar reversado":"✎ incluir"):null,
               rawExcl&&!rawRev?e("button",{onClick:()=>setEdit(ki,"_unexcl",!unexcl),title:unexcl?"Volver a excluir esta línea":"Incluir esta línea (quitar exclusión) para asociarle su nota de crédito / documento",
                 style:{display:"block",marginTop:4,background:"transparent",border:"1px solid "+C.border,borderRadius:6,color:unexcl?C.muted:C.acL,fontSize:10,padding:"1px 6px",cursor:"pointer"}},unexcl?"↩ excluir":"✎ incluir"):null),
-            td(rutVal,"left",C.muted),
+            editable?edRut(ki,rutVal,d0?d0.ndoc:""):td(rutVal,"left",C.muted),
             e("td",{style:{padding:"5px 8px",textAlign:"center",borderBottom:"1px solid "+C.border,color:dd?null:C.muted}},
               mgr||"—",
               editable?e("button",{onClick:()=>addDocLine(ki),title:"Agregar otro documento a esta línea de cobro",
@@ -2278,7 +2300,7 @@ function App(){
             td("","left"),e("td",{style:{padding:"7px 8px",borderBottom:"1px solid "+C.border}},""),td("","left"),td("","center"),
             td("","right"),td("","right"),
             td(provName?badge(provName,"rgba(56,139,253,.16)",C.acL):"","left"),
-            td(rutVal,"left",C.muted),
+            edRut(ek,effRut(edits,ek,dx.rut),dx.ndoc||""),
             td(badge("📦 Multi",C.accent),"center"),
             td(editVal(edits,ek,"codigo",dx.codigo||""),"left",C.muted),
             td(editVal(edits,ek,"centroCosto",dx.centroCosto||""),"left",C.muted),
