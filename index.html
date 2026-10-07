@@ -900,7 +900,7 @@ const C={bg:'#0D1117',surf:'#161B22',surf2:'#1C2128',border:'#30363D',accent:'#3
   brand:'#2536E8',brandDark:'#1B279E'};  // azul Global66
 
 // ══ STORAGE (cache de proveedores con versión) ════════════════════════════════
-const APP_VER="v19 · 2026-10-07";  // sello de build para verificar despliegue
+const APP_VER="v20 · 2026-10-07";  // sello de build para verificar despliegue
 const PROVS_VERSION="v5.2-845";
 const SK="rec_proveedores";
 const SK_VER="rec_proveedores_version";
@@ -1849,7 +1849,7 @@ function App(){
   const filtProv=useMemo(()=>provs.filter(p=>{
     if(!searchP)return true;const s=searchP.toLowerCase();
     return p.nombre.toLowerCase().includes(s)||String(p.rut||"").includes(s)||String(p.kw||"").toLowerCase().includes(s);
-  }),[provs,searchP]);
+  }).slice().sort((a,b)=>(b.id||0)-(a.id||0)),[provs,searchP]);  // más nuevos (mayor id) primero → se ven al agregar
   // ── filtro documentos Manager (por razón social, RUT o N° Doc) ──
   const filtDocs=useMemo(()=>{
     if(!searchD.trim())return docsDB;const s=searchD.toLowerCase();const sr=normRut(searchD);
